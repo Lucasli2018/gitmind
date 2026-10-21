@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>分享 · MindFlow</title>
+  <link rel="stylesheet" href="/assets/css/base.css" />
+  <link rel="stylesheet" href="/assets/css/editor.css" />
+  <style>
+    .share-bar { display:flex; align-items:center; gap:14px; height:56px; padding:0 16px; background:#fff; border-bottom:1px solid #e8ecf1; z-index:20; position:relative; }
+    .share-bar .logo { display:flex; align-items:center; gap:8px; font-weight:800; font-size:18px; }
+    .share-bar .logo .dot { width:24px; height:24px; border-radius:7px; background:linear-gradient(135deg,#11b5a4,#2f80ed); }
+    .share-bar .spacer { flex:1; }
+    .share-bar .ptag { font-size:12px; color:#11a884; background:#e6f7f4; padding:3px 10px; border-radius:999px; font-weight:700; }
+  </style>
+</head>
+<body>
+  <div class="share-bar">
+    <a class="logo" href="/"><span class="dot"></span><span>Mind<b>Flow</b></span></a>
+    <span id="shareTitle" style="font-weight:700;font-size:16px"></span>
+    <span class="ptag">公开分享</span>
+    <span class="spacer"></span>
+    <a class="btn btn-ghost btn-sm" href="/login.html">登录 / 注册</a>
+    <a class="btn btn-primary btn-sm" href="/dashboard.html">创建同款</a>
+  </div>
+  <div class="gm-body" style="height:calc(100vh - 56px)">
+    <div class="gm-canvas" id="canvas" style="flex:1"></div>
+  </div>
+
+  <script type="module" src="/assets/js/share.js"></script>
+</body>
+</html>

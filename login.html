@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>登录 · MindFlow</title>
+  <link rel="stylesheet" href="/assets/css/base.css" />
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="logo"><span class="dot"></span><span>Mind<b>Flow</b></span></div>
+      <h2>欢迎回来</h2>
+      <p class="lead">登录后即可云端保存你的所有导图</p>
+      <form id="form">
+        <div class="field">
+          <label for="email">邮箱</label>
+          <input id="email" type="email" autocomplete="username" placeholder="you@example.com" required />
+        </div>
+        <div class="field">
+          <label for="pw">密码</label>
+          <input id="pw" type="password" autocomplete="current-password" placeholder="至少 6 位" required />
+        </div>
+        <div class="auth-error" id="err"></div>
+        <button class="btn btn-primary" type="submit" id="submit">登录</button>
+      </form>
+      <div class="foot">还没有账号？<a href="/register.html">立即注册</a> · <a href="/">返回首页</a></div>
+    </div>
+  </div>
+  <script type="module" src="/assets/js/auth.js"></script>
+</body>
+</html>

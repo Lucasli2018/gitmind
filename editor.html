@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>编辑 · MindFlow</title>
+  <link rel="stylesheet" href="/assets/css/base.css" />
+  <link rel="stylesheet" href="/assets/css/editor.css" />
+</head>
+<body>
+  <div class="gm-topbar">
+    <a class="gm-back" href="/dashboard.html">← 我的导图</a>
+    <input id="titleInput" class="gm-title" placeholder="未命名导图" maxlength="80" />
+    <div class="gm-modes" id="modes">
+      <button data-mode="mindmap" class="active">思维导图</button>
+      <button data-mode="flowchart">流程图</button>
+      <button data-mode="whiteboard">白板</button>
+    </div>
+    <span class="gm-spacer"></span>
+    <span class="gm-status saved" id="status">已保存</span>
+    <button class="btn btn-ghost btn-sm" id="saveBtn">保存</button>
+    <button class="btn btn-soft btn-sm" id="shareBtn">分享</button>
+    <div class="gm-menu" id="exportMenu">
+      <button id="exportToggle">导出 / 导入 ▾</button>
+      <div class="pop" id="exportPop">
+        <button data-act="png"><span id="iPng"></span>导出 PNG</button>
+        <button data-act="svg"><span id="iSvg"></span>导出 SVG</button>
+        <button data-act="json"><span id="iJson"></span>导出 JSON</button>
+        <div class="sep"></div>
+        <button data-act="import"><span id="iImport"></span>导入 JSON</button>
+        <input type="file" id="importFile" accept="application/json,.json" style="display:none" />
+      </div>
+    </div>
+  </div>
+
+  <div class="gm-body">
+    <div class="gm-toolbar" id="toolbar"></div>
+    <div class="gm-canvas" id="canvas"></div>
+    <div class="gm-right">
+      <div class="gm-panel">
+        <h4>视图</h4>
+        <div class="gm-zoom">
+          <button id="zoomOut">−</button>
+          <button id="zoomFit" title="适应屏幕">⤢</button>
+          <button id="zoomIn">+</button>
+        </div>
+      </div>
+      <div class="gm-panel" id="themePanel">
+        <h4>主题配色</h4>
+        <div class="gm-themes" id="themes"></div>
+      </div>
+      <div class="gm-panel">
+        <h4>操作</h4>
+        <div class="gm-actions">
+          <button class="btn btn-ghost btn-sm" id="layoutBtn">自动布局</button>
+          <button class="btn btn-ghost btn-sm" id="outlineBtn">大纲模式</button>
+          <button class="btn btn-danger btn-sm" id="delBtn">删除选中</button>
+        </div>
+      </div>
+      <div class="gm-panel" id="helpPanel">
+        <h4>快捷键</h4>
+        <div style="font-size:12px;color:#8a94a6;line-height:1.9">
+          脑图：Tab 加子节点 · Enter 加兄弟<br/>
+          删除：Delete / Backspace<br/>
+          平移：拖空白处 · 缩放：滚轮<br/>
+          保存：Ctrl/⌘ + S
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/assets/js/editor/main.js"></script>
+</body>
+</html>

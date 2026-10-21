@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MindFlow · 免费在线思维导图 / 流程图 / 白板</title>
+  <meta name="description" content="MindFlow 是一款免费的在线思维导图、流程图与白板工具，支持云端同步、模板库、导入导出。" />
+  <link rel="stylesheet" href="/assets/css/base.css" />
+</head>
+<body>
+  <nav class="nav">
+    <a class="logo" href="/"><span class="dot"></span><span>Mind<b>Flow</b></span></a>
+    <a class="link" href="#templates">模板</a>
+    <a class="link" href="#features">功能</a>
+    <span class="spacer"></span>
+    <span id="navAuth"></span>
+  </nav>
+
+  <header class="hero">
+    <h1>让思想<span class="hl">自由流淌</span></h1>
+    <p>免费、好用、高效、好看的思维导图工具。思维导图 · 流程图 · 自由白板，一个账号云端同步所有内容。</p>
+    <div class="cta">
+      <a class="btn btn-primary" id="ctaStart" href="/register.html">免费开始</a>
+      <a class="btn btn-ghost" href="#templates">浏览模板</a>
+    </div>
+    <div class="sub">无需下载 · 浏览器即用 · 数据存于 Cloudflare D1 云端</div>
+  </header>
+
+  <section class="section tight" id="templates">
+    <div class="container">
+      <h2 class="h2">从模板开始</h2>
+      <p class="h2-sub">精选场景模板，一键新建你的第一张图</p>
+      <div class="grid cols-3" id="tplGrid"></div>
+    </div>
+  </section>
+
+  <section class="section tight" id="features">
+    <div class="container">
+      <h2 class="h2">一个工具，三种创作</h2>
+      <p class="h2-sub">满足从灵感记录到流程设计的全部需求</p>
+      <div class="features">
+        <div class="feature"><div class="ic" id="f1"></div><h4>思维导图</h4><p>树状自动布局、主题切换、大纲双向编辑，理清思路超轻松。</p></div>
+        <div class="feature"><div class="ic" id="f2"></div><h4>流程图</h4><p>矩形 / 菱形 / 椭圆图形，拖拽连线带箭头，流程一目了然。</p></div>
+        <div class="feature"><div class="ic" id="f3"></div><h4>自由白板</h4><p>便签、文字、自由画笔，天马行空的头脑风暴空间。</p></div>
+        <div class="feature"><div class="ic" id="f4"></div><h4>云端同步</h4><p>账号登录即自动保存，多端访问，分享链接一键公开。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="site">
+    MindFlow · 灵感源自 GitMind 的在线脑图体验 · Powered by Cloudflare Pages + D1
+  </footer>
+
+  <script type="module" src="/assets/js/app.js"></script>
+</body>
+</html>

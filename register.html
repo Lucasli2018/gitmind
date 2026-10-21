@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>注册 · MindFlow</title>
+  <link rel="stylesheet" href="/assets/css/base.css" />
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="logo"><span class="dot"></span><span>Mind<b>Flow</b></span></div>
+      <h2>创建账号</h2>
+      <p class="lead">免费注册，开启你的思维导图之旅</p>
+      <form id="form">
+        <div class="field">
+          <label for="nick">昵称（可选）</label>
+          <input id="nick" type="text" placeholder="给自己起个名字" maxlength="24" />
+        </div>
+        <div class="field">
+          <label for="email">邮箱</label>
+          <input id="email" type="email" autocomplete="username" placeholder="you@example.com" required />
+        </div>
+        <div class="field">
+          <label for="pw">密码</label>
+          <input id="pw" type="password" autocomplete="new-password" placeholder="至少 6 位" required />
+        </div>
+        <div class="auth-error" id="err"></div>
+        <button class="btn btn-primary" type="submit" id="submit">注册并登录</button>
+      </form>
+      <div class="foot">已有账号？<a href="/login.html">去登录</a> · <a href="/">返回首页</a></div>
+    </div>
+  </div>
+  <script type="module" src="/assets/js/auth.js"></script>
+</body>
+</html>

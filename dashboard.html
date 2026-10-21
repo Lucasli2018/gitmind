@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>我的导图 · MindFlow</title>
+  <link rel="stylesheet" href="/assets/css/base.css" />
+</head>
+<body>
+  <nav class="nav">
+    <a class="logo" href="/"><span class="dot"></span><span>Mind<b>Flow</b></span></a>
+    <a class="link" href="/">首页</a>
+    <span class="spacer"></span>
+    <button class="btn btn-primary btn-sm" id="newBtn">+ 新建导图</button>
+    <span id="navAuth"></span>
+  </nav>
+
+  <main class="container section tight">
+    <div class="dash-head">
+      <h1>我的导图</h1>
+      <div class="seg" id="filter">
+        <button class="active" data-f="all">全部</button>
+        <button data-f="mindmap">脑图</button>
+        <button data-f="flowchart">流程图</button>
+        <button data-f="whiteboard">白板</button>
+      </div>
+      <span class="spacer"></span>
+    </div>
+    <div id="list"></div>
+  </main>
+
+  <div class="modal-mask" id="newMask" style="display:none">
+    <div class="modal">
+      <h3>新建导图</h3>
+      <div class="type-grid" id="typeGrid">
+        <div class="opt" data-type="mindmap"><div class="ic" id="tM"></div><span>思维导图</span></div>
+        <div class="opt" data-type="flowchart"><div class="ic" id="tF"></div><span>流程图</span></div>
+        <div class="opt" data-type="whiteboard"><div class="ic" id="tB"></div><span>白板</span></div>
+      </div>
+      <div style="margin-top:18px;font-size:13px;color:var(--ink-2);font-weight:600">或从模板新建</div>
+      <div id="tplChips" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px"></div>
+      <div class="row"><button class="btn btn-ghost" id="newCancel">取消</button></div>
+    </div>
+  </div>
+
+  <script type="module" src="/assets/js/dashboard.js"></script>
+</body>
+</html>
