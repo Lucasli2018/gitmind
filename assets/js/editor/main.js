@@ -131,7 +131,10 @@ function addTool(bar, icon, label, action) {
   const b = document.createElement("button");
   b.className = "gm-tool";
   b.innerHTML = `${ICONS[icon] || ""}<span class="lbl">${label}</span>`;
-  b.addEventListener("click", action);
+  b.addEventListener("click", () => {
+    action();
+    document.body.classList.remove("gm-tools-open");
+  });
   bar.appendChild(b);
   return b;
 }
@@ -206,6 +209,24 @@ function wireChrome() {
   document.querySelectorAll("#modes button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
   const titleInput = document.getElementById("titleInput");
   titleInput.addEventListener("input", () => { map.title = titleInput.value; scheduleSave(); });
+  wireMobileDrawers();
+}
+
+// 移动端：工具栏 / 面板抽屉开关 + 遮罩关闭
+function wireMobileDrawers() {
+  const body = document.body;
+  const t = document.getElementById("toolsToggle");
+  const p = document.getElementById("panelToggle");
+  const m = document.getElementById("drawerMask");
+  if (t) t.addEventListener("click", () => {
+    const open = body.classList.toggle("gm-tools-open");
+    if (open) body.classList.remove("gm-panel-open");
+  });
+  if (p) p.addEventListener("click", () => {
+    const open = body.classList.toggle("gm-panel-open");
+    if (open) body.classList.remove("gm-tools-open");
+  });
+  if (m) m.addEventListener("click", () => body.classList.remove("gm-tools-open", "gm-panel-open"));
 }
 
 // ---------- 快捷键 ----------

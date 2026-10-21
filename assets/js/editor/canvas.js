@@ -17,6 +17,7 @@ export class Editor {
     this.selection = new Set();
     this.sizes = new Map();
     this._drag = null; this._pan = null; this._connect = null; this._stroke = null;
+    this._pinch = null;
 
     const svg = document.createElementNS(SVGNS, "svg");
     svg.setAttribute("class", "gm-svg");
@@ -39,6 +40,44 @@ export class Editor {
     window.addEventListener("pointerup", (e) => this.onUp(e));
     svg.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
     svg.addEventListener("dblclick", (e) => this.onDblClick(e));
+
+    // 双指捏合缩放（移动端）：与 pointer 单指平移/拖拽共存
+    svg.addEventListener("touchstart", (e) => this.onTouchStart(e), { passive: false });
+    svg.addEventListener("touchmove", (e) => this.onTouchMove(e), { passive: false });
+    svg.addEventListener("touchend", (e) => this.onTouchEnd(e), { passive: false });
+    svg.addEventListener("touchcancel", (e) => this.onTouchEnd(e), { passive: false });
+  }
+
+  onTouchStart(e) {
+    if (e.touches.length !== 2) return;
+    const [a, b] = e.touches;
+    const dx = a.clientX - b.clientX, dy = a.clientY - b.clientY;
+    const midX = (a.clientX + b.clientX) / 2, midY = (a.clientY + b.clientY) / 2;
+    const w = this.toWorld(midX, midY);
+    this._pinch = {
+      startDist: Math.hypot(dx, dy) || 1,
+      startScale: this.view.scale,
+      worldX: w.x, worldY: w.y,
+    };
+    // 进入双指模式，放弃单指已开始的操作，避免冲突
+    this._drag = null; this._pan = null; this._connect = null; this._stroke = null;
+  }
+  onTouchMove(e) {
+    if (!this._pinch || e.touches.length !== 2) return;
+    e.preventDefault();
+    const [a, b] = e.touches;
+    const dx = a.clientX - b.clientX, dy = a.clientY - b.clientY;
+    const dist = Math.hypot(dx, dy) || 1;
+    const midX = (a.clientX + b.clientX) / 2, midY = (a.clientY + b.clientY) / 2;
+    const scale = Math.min(3, Math.max(0.2, this._pinch.startScale * (dist / this._pinch.startDist)));
+    this.view.scale = scale;
+    const r = this.rect();
+    this.view.x = (midX - r.left) - this._pinch.worldX * scale;
+    this.view.y = (midY - r.top) - this._pinch.worldY * scale;
+    this.render();
+  }
+  onTouchEnd(e) {
+    if (e.touches.length < 2 && this._pinch) { this._pinch = null; this.onChange(); }
   }
 
   // ---------- 加载 / 模式 ----------
@@ -253,6 +292,7 @@ export class Editor {
   // ---------- 指针事件 ----------
   onDown(e) {
     if (e.button !== 0) return;
+    if (this._pinch) return;
     const r = this.rect();
     const sx = e.clientX - r.left, sy = e.clientY - r.top;
     const target = e.target;
@@ -290,6 +330,7 @@ export class Editor {
   }
 
   onMove(e) {
+    if (this._pinch) return;
     if (this._stroke) {
       const w = this.toWorld(e.clientX, e.clientY);
       this._stroke.points.push({ x: w.x, y: w.y });
