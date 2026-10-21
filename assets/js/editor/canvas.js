@@ -82,8 +82,15 @@ export class Editor {
     for (const n of this.doc.nodes) this.sizes.set(n.id, sizeOf(n, this.doc.type));
 
     let html = "";
-    // 边
-    for (const e of this.doc.edges) html += this.edgeHTML(e);
+    // 边（脑图模式按 parentId 派生连线，保证父子之间始终有线）
+    let edges = this.doc.edges;
+    if (this.doc.type === "mindmap") {
+      edges = [];
+      for (const n of this.doc.nodes) {
+        if (n.parentId && this.nodeById(n.parentId)) edges.push({ id: "p-" + n.id, from: n.parentId, to: n.id });
+      }
+    }
+    for (const e of edges) html += this.edgeHTML(e);
     // 自由画笔
     for (const s of this.doc.strokes) html += this.strokeHTML(s);
     if (this._stroke) html += this.strokeHTML(this._stroke);
