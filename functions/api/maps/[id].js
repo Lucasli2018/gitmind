@@ -1,7 +1,7 @@
 // GET    /api/maps/:id  -> 获取（ owner 或 is_public 可读）
 // PUT    /api/maps/:id  { title?, data?, is_public? } -> 更新（仅 owner）
 // DELETE /api/maps/:id  -> 删除（仅 owner）
-import { json, parseUser } from "./_shared.js";
+import { json, parseUser } from "../_shared.js";
 
 export async function onRequestGet({ request, env, params }) {
   const row = await env.DB.prepare("SELECT * FROM gm_maps WHERE id=?").bind(params.id).first();

@@ -1,5 +1,5 @@
 // PUT /api/maps/:id/share  { is_public } -> 切换公开/私有（仅 owner）
-import { json, parseUser } from "./_shared.js";
+import { json, parseUser } from "../../_shared.js";
 
 export async function onRequestPut({ request, env, params }) {
   const u = await parseUser(env, request);
