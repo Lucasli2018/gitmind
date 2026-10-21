@@ -17,6 +17,16 @@ document.getElementById("iPng").innerHTML = ICONS.image;
 document.getElementById("iSvg").innerHTML = ICONS.flow;
 document.getElementById("iJson").innerHTML = ICONS.folder;
 document.getElementById("iImport").innerHTML = ICONS.upload;
+document.getElementById("undoBtn").innerHTML = `${ICONS.undo}<span>撤销</span>`;
+document.getElementById("redoBtn").innerHTML = `${ICONS.redo}<span>重做</span>`;
+
+// 同步顶栏 undo/redo 按钮的可用态
+function updateUndoRedoButtons(canUndo, canRedo) {
+  const u = document.getElementById("undoBtn");
+  const r = document.getElementById("redoBtn");
+  if (u) u.disabled = !canUndo;
+  if (r) r.disabled = !canRedo;
+}
 
 const THEMES = {
   teal: ["#11b5a4", "#2f80ed", "#ff7a59", "#f5a623", "#9b59b6", "#16a34a"],
@@ -78,6 +88,7 @@ function ensureRoot() {
     editor.doc.nodes.push({ id: newId(), x: 0, y: 0, w: 160, h: 56, text: "中心主题", shape: "rounded", color: "#11b5a4", textColor: "#fff", stroke: "#11b5a4", fontSize: 17, parentId: null, collapsed: false });
     layoutMindmap(editor.doc);
     editor.render(); editor.fitView(true); editor.onChange();
+    editor.pushHistory();
     return true;
   }
   return false;
@@ -98,6 +109,7 @@ function applyTheme(name) {
   roots.forEach((r, i) => paint(r.id, pal[i % pal.length]));
   if (editor.doc.type === "mindmap") layoutMindmap(editor.doc);
   editor.render(); editor.onChange();
+  editor.pushHistory();
   document.querySelectorAll("#themes .gm-theme").forEach((el) => el.classList.toggle("active", el.dataset.theme === name));
 }
 function buildThemes() {
@@ -122,6 +134,7 @@ function setLayout(layout) {
   editor.render();
   editor.fitView(true);
   editor.onChange();
+  editor.pushHistory();
   document.querySelectorAll("#layouts button").forEach((b) => b.classList.toggle("active", b.dataset.layout === layout));
 }
 function buildLayouts() {
@@ -222,6 +235,7 @@ function wireExport() {
       map.title = editor.doc.type === "mindmap" ? map.title : map.title;
       document.querySelectorAll("#modes button").forEach((b) => b.classList.toggle("active", b.dataset.mode === editor.mode));
       buildToolbar(); scheduleSave();
+      editor.pushHistory();
     });
   });
 }
@@ -230,6 +244,8 @@ function wireExport() {
 function wireChrome() {
   document.getElementById("saveBtn").addEventListener("click", saveNow);
   document.getElementById("shareBtn").addEventListener("click", toggleShare);
+  document.getElementById("undoBtn").addEventListener("click", () => editor.undo());
+  document.getElementById("redoBtn").addEventListener("click", () => editor.redo());
   document.getElementById("zoomIn").addEventListener("click", () => { const r = editor.rect(); editor.zoomAt(1.2, r.left + r.width / 2, r.top + r.height / 2); });
   document.getElementById("zoomOut").addEventListener("click", () => { const r = editor.rect(); editor.zoomAt(1 / 1.2, r.left + r.width / 2, r.top + r.height / 2); });
   document.getElementById("zoomFit").addEventListener("click", () => editor.fitView());
@@ -271,6 +287,8 @@ function wireKeys() {
     const t = e.target;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); saveNow(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); if (e.shiftKey) editor.redo(); else editor.undo(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") { e.preventDefault(); editor.redo(); return; }
     if (e.key === "Tab" && editor.mode === "mindmap") {
       e.preventDefault();
       const sel = [...editor.selection][0];
@@ -301,7 +319,7 @@ function wireKeys() {
   document.getElementById("titleInput").value = map.title || "未命名导图";
   document.getElementById("shareBtn").textContent = map.is_public ? "已分享" : "分享";
 
-  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, mode: map.type || "mindmap" });
+  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, mode: map.type || "mindmap" });
   editor.load(map.data);
   dirty = false; // 初始加载触发的 onChange 不算脏，避免无谓落盘
   document.querySelectorAll("#modes button").forEach((b) => b.classList.toggle("active", b.dataset.mode === editor.mode));

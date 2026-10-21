@@ -18,6 +18,9 @@ export class Editor {
     this.sizes = new Map();
     this._drag = null; this._pan = null; this._connect = null; this._stroke = null;
     this._pinch = null;
+    // 撤销/重做历史栈（快照式，仅存数据不含视图）
+    this._history = []; this._hidx = -1; this._restoring = false;
+    this._updateUndoRedoButtons = opts.onUndoRedoState || null;
 
     const svg = document.createElementNS(SVGNS, "svg");
     svg.setAttribute("class", "gm-svg");
@@ -93,6 +96,7 @@ export class Editor {
     if (this.mode === "mindmap") layoutMindmap(this.doc);
     this.render();
     this.fitView(true);
+    this._initHistory();
   }
   setMode(mode) {
     this.mode = mode;
@@ -102,6 +106,62 @@ export class Editor {
     if (mode === "mindmap") layoutMindmap(this.doc);
     this.render();
     this.fitView(true);
+    this.pushHistory();
+  }
+
+  // ---------- 撤销 / 重做 ----------
+  _snapshot() {
+    return JSON.stringify({
+      type: this.doc.type,
+      layout: this.doc.layout || "mindmap",
+      nodes: this.doc.nodes,
+      edges: this.doc.edges,
+      strokes: this.doc.strokes,
+    });
+  }
+  _initHistory() {
+    this._history = [this._snapshot()];
+    this._hidx = 0;
+    this._notifyUndoRedo();
+  }
+  pushHistory() {
+    if (this._restoring) return;
+    // 截断 redo 分支：从历史当前点之后重新开始
+    if (this._hidx < this._history.length - 1) this._history = this._history.slice(0, this._hidx + 1);
+    this._history.push(this._snapshot());
+    if (this._history.length > 80) this._history.shift();
+    this._hidx = this._history.length - 1;
+    this._notifyUndoRedo();
+  }
+  undo() {
+    if (this._hidx <= 0) return;
+    this._hidx--;
+    this._restore(this._history[this._hidx]);
+  }
+  redo() {
+    if (this._hidx >= this._history.length - 1) return;
+    this._hidx++;
+    this._restore(this._history[this._hidx]);
+  }
+  _restore(snap) {
+    this._restoring = true;
+    let s;
+    try { s = JSON.parse(snap); } catch (_) { this._restoring = false; return; }
+    this.doc.type = s.type || "mindmap";
+    this.doc.layout = s.layout || "mindmap";
+    this.doc.nodes = s.nodes || [];
+    this.doc.edges = s.edges || [];
+    this.doc.strokes = s.strokes || [];
+    this.mode = this.doc.type;
+    this.selection.clear();
+    if (this.doc.type === "mindmap") layoutMindmap(this.doc);
+    this.render();
+    this._restoring = false;
+    this._notifyUndoRedo();
+    this.onChange();
+  }
+  _notifyUndoRedo() {
+    if (this._updateUndoRedoButtons) this._updateUndoRedoButtons(this._hidx > 0, this._hidx < this._history.length - 1);
   }
 
   // ---------- 坐标转换 ----------
@@ -373,15 +433,15 @@ export class Editor {
   onUp(e) {
     if (this._stroke) {
       if (this._stroke.points.length > 1) this.doc.strokes.push(this._stroke);
-      this._stroke = null; this.render(); this.onChange(); return;
+      this._stroke = null; this.render(); this.onChange(); this.pushHistory(); return;
     }
     if (this._connect) {
       const hitEl = e.target.closest && e.target.closest("[data-id]");
       const to = hitEl ? hitEl.getAttribute("data-id") : null;
       if (to && to !== this._connect.from) this.addEdge(this._connect.from, to);
-      this._connect = null; this.render(); this.onChange(); return;
+      this._connect = null; this.render(); this.onChange(); this.pushHistory(); return;
     }
-    if (this._drag) { if (this._drag.moved) this.onChange(); this._drag = null; return; }
+    if (this._drag) { if (this._drag.moved) { this.onChange(); this.pushHistory(); } this._drag = null; return; }
     if (this._pan) { this._pan = null; return; }
   }
 
@@ -419,10 +479,11 @@ export class Editor {
     document.body.appendChild(ta);
     ta.focus(); ta.select();
     const commit = () => {
-      n.text = ta.value;
+      const old = n.text;
+      const val = ta.value;
       ta.remove();
-      this.render();
-      this.onChange();
+      if (val !== old) { n.text = val; this.render(); this.pushHistory(); this.onChange(); }
+      else { this.render(); }
     };
     ta.addEventListener("blur", commit);
     ta.addEventListener("keydown", (ev) => {
@@ -447,6 +508,7 @@ export class Editor {
     layoutMindmap(this.doc);
     this.selection = new Set([id]);
     this.render(); this.onChange();
+    this.pushHistory();
     this.beginTextEdit(id);
     return id;
   }
@@ -459,6 +521,7 @@ export class Editor {
     layoutMindmap(this.doc);
     this.selection = new Set([id]);
     this.render(); this.onChange();
+    this.pushHistory();
     this.beginTextEdit(id);
     return id;
   }
@@ -470,6 +533,7 @@ export class Editor {
     if (this.mode === "mindmap") layoutMindmap(this.doc);
     this.selection.clear();
     this.render(); this.onChange();
+    this.pushHistory();
   }
 
   addFlowShape(shape, wx, wy) {
@@ -479,6 +543,7 @@ export class Editor {
     this.doc.nodes.push(node);
     this.selection = new Set([id]);
     this.render(); this.onChange();
+    this.pushHistory();
     this.beginTextEdit(id);
     return id;
   }
@@ -490,6 +555,7 @@ export class Editor {
     this.doc.nodes.push(node);
     this.selection = new Set([id]);
     this.render(); this.onChange();
+    this.pushHistory();
     this.beginTextEdit(id);
     return id;
   }

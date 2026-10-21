@@ -18,6 +18,8 @@
       <button data-mode="whiteboard">白板</button>
     </div>
     <span class="gm-spacer"></span>
+    <button class="btn btn-ghost btn-sm gm-undo" id="undoBtn" title="撤销 (Ctrl+Z)" disabled></button>
+    <button class="btn btn-ghost btn-sm gm-redo" id="redoBtn" title="重做 (Ctrl+Y)" disabled></button>
     <span class="gm-status saved" id="status">已保存</span>
     <button class="btn btn-ghost btn-sm gm-hide-mob" id="saveBtn">保存</button>
     <button class="btn btn-soft btn-sm" id="shareBtn">分享</button>
@@ -75,6 +77,7 @@
         <div style="font-size:12px;color:#8a94a6;line-height:1.9">
           脑图：Tab 加子节点 · Enter 加兄弟<br/>
           删除：Delete / Backspace<br/>
+          撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y / ⌘+Shift+Z<br/>
           平移：拖空白处 · 缩放：滚轮<br/>
           保存：Ctrl/⌘ + S
         </div>

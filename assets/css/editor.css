@@ -126,6 +126,7 @@ body {
   .gm-status { display: none; }
   .gm-hide-mob { display: none !important; }       /* 移动端隐藏独立保存按钮（已有自动保存兜底） */
   .gm-menu { display: none; }                       /* 移动端隐藏导出/导入菜单，避免顶栏挤压 */
+  #undoBtn span, #redoBtn span { display: none; }   /* 移动端撤销/重做只留图标，省空间 */
 
   /* 顶栏移动端专用切换按钮 */
   .gm-mob-toggle {
