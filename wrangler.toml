@@ -1,9 +1,17 @@
 name = "gitmind"
 pages_build_output_dir = "."
 compatibility_date = "2024-09-23"
+account_id = "332b848d9f5d9ec2808bdb855763eb8e"
 
 # 绑定共享 dev 库（跨项目统一，database_id 为真实值，前缀 gm_）
 [[d1_databases]]
 binding = "DB"
 database_name = "dev"
 database_id = "3c83aee3-4645-450b-b50b-6488750deeb4"
+
+# 导图内容优先存 R2（缺失 / 不可用时由 _store.js 自动回退 D1 兜底）
+# 部署前需创建该桶：wrangler r2 bucket create gitmind（或 CF 控制台），并确保
+# CLOUDFLARE_API_TOKEN 具备 Account → R2 → Edit 权限。未配置时不影响现有 D1 逻辑。
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "gitmind"
