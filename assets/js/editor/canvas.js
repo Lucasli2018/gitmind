@@ -345,13 +345,17 @@ export class Editor {
     const r = this.rect();
     const left = r.left + this.view.x + n.x * this.view.scale;
     const top = r.top + this.view.y + n.y * this.view.scale;
+    // 底色跟随节点填充色，保证文字始终可见（避免白字白底）
+    const solid = n.color && n.color !== "#fff" && n.color !== "transparent" && n.color.toLowerCase() !== "#ffffff";
+    const bg = solid ? n.color : "#fff";
+    const fg = solid ? (n.textColor || "#fff") : (isLightColor(bg) ? "#1f2a37" : "#fff");
     const ta = document.createElement("textarea");
     ta.value = n.text || "";
     ta.className = "gm-edit";
     ta.style.cssText =
-      `position:fixed; left:${left}px; top:${top}px; width:${s.w * this.view.scale}px; height:${s.h * this.view.scale}px;` +
+      `position:fixed; left:${left}px; top:${top}px; width:${Math.max(s.w * this.view.scale, 60)}px; height:${Math.max(s.h * this.view.scale, 30)}px;` +
       `font-size:${ (n.fontSize || 15) * this.view.scale }px; border:2px solid #11b5a4; border-radius:12px; padding:6px 8px;` +
-      `resize:none; outline:none; text-align:center; box-sizing:border-box; font-family:inherit; color:${n.textColor || "#1f2a37"}; background:#fff; z-index:50; overflow:hidden;`;
+      `resize:none; outline:none; text-align:center; box-sizing:border-box; font-family:inherit; color:${fg}; background:${bg}; z-index:50; overflow:hidden;`;
     document.body.appendChild(ta);
     ta.focus(); ta.select();
     const commit = () => {
@@ -435,6 +439,15 @@ export class Editor {
 
 function escapeXml(s) {
   return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+// 判断颜色是否为浅色（用于编辑框文字取对比色）
+function isLightColor(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex || "").trim());
+  if (!m) return true;
+  const v = parseInt(m[1], 16);
+  const r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
+  return (r * 299 + g * 587 + b * 114) / 1000 > 160;
 }
 
 export { PALETTE };
