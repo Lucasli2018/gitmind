@@ -28,19 +28,25 @@ let currentTheme = "teal";
 
 let map = null;
 let editor = null;
-let saveTimer = null;
+let dirty = false;          // 是否有未保存的本地改动
+let autosaveTimer = null;
+const AUTOSAVE_MS = 60000;  // 每分钟自动落盘一次，替代实时保存
 
+// onChange 入口：不再实时保存，仅标记脏并记录状态，由定时器每分钟落盘
 function scheduleSave() {
-  setStatus("saving", "保存中…");
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveNow, 800);
+  dirty = true;
+  setStatus("unsaved", "未保存");
+}
+function autosaveTick() {
+  if (dirty) saveNow();
 }
 async function saveNow() {
   if (!editor || !map) return;
-  clearTimeout(saveTimer);
+  if (!dirty) { setStatus("saved", "已保存"); return; }
   setStatus("saving", "保存中…");
   try {
     await saveMap(mapId, { title: map.title, data: editor.doc });
+    dirty = false;
     setStatus("saved", "已保存");
   } catch (e) {
     setStatus("saved", "保存失败");
@@ -210,6 +216,11 @@ function wireChrome() {
   const titleInput = document.getElementById("titleInput");
   titleInput.addEventListener("input", () => { map.title = titleInput.value; scheduleSave(); });
   wireMobileDrawers();
+  // 每分钟自动保存一次（替代实时保存），操作时不发请求以提升流畅度
+  autosaveTimer = setInterval(autosaveTick, AUTOSAVE_MS);
+  // 兜底：切走/关闭页面若有未保存改动，立即落盘，最多丢 <1 分钟
+  document.addEventListener("visibilitychange", () => { if (document.hidden && dirty) saveNow(); });
+  window.addEventListener("beforeunload", () => { if (dirty) saveNow(); });
 }
 
 // 移动端：工具栏 / 面板抽屉开关 + 遮罩关闭
@@ -267,6 +278,7 @@ function wireKeys() {
 
   editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, mode: map.type || "mindmap" });
   editor.load(map.data);
+  dirty = false; // 初始加载触发的 onChange 不算脏，避免无谓落盘
   document.querySelectorAll("#modes button").forEach((b) => b.classList.toggle("active", b.dataset.mode === editor.mode));
   if (editor.mode === "mindmap") ensureRoot();
 

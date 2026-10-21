@@ -24,6 +24,7 @@ body {
 .gm-status { font-size: 13px; color: #8a94a6; white-space: nowrap; }
 .gm-status.saving { color: #f5a623; }
 .gm-status.saved { color: #11a884; }
+.gm-status.unsaved { color: #d98a2b; }
 
 .gm-body { display: flex; height: calc(100vh - 56px); }
 
