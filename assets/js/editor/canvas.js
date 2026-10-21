@@ -190,11 +190,23 @@ export class Editor {
     if (!sa || !sb) return "";
     let d, stroke, marker = "";
     if (this.doc.type === "mindmap") {
-      const px = a.x + sa.w, py = a.y + sa.h / 2;
-      const cx = b.x, cy = b.y + sb.h / 2;
-      const dx = cx - px;
-      d = `M ${px},${py} C ${px + dx * 0.5},${py} ${cx - dx * 0.5},${cy} ${cx},${cy}`;
+      const side = b.side || "right";
+      const isList = this.doc.layout === "list";
+      let px, py, cx, cy;
+      if (side === "left") { px = a.x; py = a.y + sa.h / 2; cx = b.x + sb.w; cy = b.y + sb.h / 2; }
+      else if (side === "down") { px = a.x + sa.w / 2; py = a.y + sa.h; cx = b.x + sb.w / 2; cy = b.y; }
+      else { px = a.x + sa.w; py = a.y + sa.h / 2; cx = b.x; cy = b.y + sb.h / 2; }
       stroke = b.stroke || "#11b5a4";
+      if (side === "down") {
+        const my = (py + cy) / 2;
+        d = `M ${px},${py} C ${px},${my} ${cx},${my} ${cx},${cy}`;
+      } else if (isList) {
+        const mx = (px + cx) / 2;
+        d = `M ${px},${py} H ${mx} V ${cy} H ${cx}`;
+      } else {
+        const dx = cx - px;
+        d = `M ${px},${py} C ${px + dx * 0.5},${py} ${cx - dx * 0.5},${cy} ${cx},${cy}`;
+      }
     } else {
       const ax = a.x + sa.w / 2, ay = a.y + sa.h / 2, bx = b.x + sb.w / 2, by = b.y + sb.h / 2;
       const sBottom = ay < by;

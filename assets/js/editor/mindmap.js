@@ -1,35 +1,143 @@
-// 思维导图：树状（横向）自动布局
+// 思维导图：多结构自动布局（参考 simple-mind-map 的布局思路自研）
+// 支持：mindmap(经典双侧平衡) / logicRight(向右逻辑) / logicLeft(向左逻辑)
+//       list(目录组织图，向右缩进) / structure(组织结构图，向下)
+// 布局时为每个非根节点标注 side(left/right/down)，供 canvas 连线渲染使用
 import { sizeOf } from "./model.js";
 
-export function layoutMindmap(doc) {
+const V_GAP = 16; // 同级节点垂直间距
+const H_GAP = 56; // 层级间最小水平间距（基准）
+
+export function layoutMindmap(doc, layout) {
   const nodes = doc.nodes || [];
   if (!nodes.length) return;
-  const children = new Map();
+  layout = layout || doc.layout || "mindmap";
+  doc.layout = layout;
+
+  const childrenMap = new Map();
   const roots = [];
   for (const n of nodes) {
     if (n.parentId == null) roots.push(n);
-    else { if (!children.has(n.parentId)) children.set(n.parentId, []); children.get(n.parentId).push(n); }
+    else { if (!childrenMap.has(n.parentId)) childrenMap.set(n.parentId, []); childrenMap.get(n.parentId).push(n); }
   }
   if (!roots.length) return;
 
-  const H_GAP = 72, V_GAP = 16;
-  function assignX(n, x) {
-    n.x = x;
-    const { w } = sizeOf(n, "mindmap");
-    const cx = x + w + H_GAP;
-    for (const k of children.get(n.id) || []) assignX(k, cx);
-  }
-  roots.forEach((r) => assignX(r, r.x || 0));
+  const getH = (n) => sizeOf(n, "mindmap").h;
+  const getW = (n) => sizeOf(n, "mindmap").w;
 
-  let cursor = 0;
-  function place(n) {
-    const kids = children.get(n.id) || [];
-    const { h } = sizeOf(n, "mindmap");
-    if (!kids.length) { n.y = cursor; cursor += h + V_GAP; return; }
-    kids.forEach(place);
-    const first = kids[0], last = kids[kids.length - 1];
-    const fh = sizeOf(first, "mindmap").h, lh = sizeOf(last, "mindmap").h;
-    n.y = (first.y + (last.y + lh)) / 2 - h / 2;
+  // 子树占用高度 / 宽度（含所有后代）
+  function subH(node) {
+    const kids = childrenMap.get(node.id) || [];
+    if (!kids.length) return getH(node);
+    let s = 0;
+    for (const k of kids) s += subH(k) + V_GAP;
+    return Math.max(getH(node), s - V_GAP);
   }
-  roots.forEach(place);
+  function subW(node) {
+    const kids = childrenMap.get(node.id) || [];
+    if (!kids.length) return getW(node);
+    let s = 0;
+    for (const k of kids) s += subW(k) + H_GAP;
+    return Math.max(getW(node), s - H_GAP);
+  }
+  // 一组兄弟的总高度
+  function groupHeight(list) {
+    let c = 0;
+    for (const k of list) c += subH(k) + V_GAP;
+    return list.length ? c - V_GAP : 0;
+  }
+
+  // 向外范式：垂直放置（根或给定列表），返回占用高度，父居中于子树
+  function placeY(node, top, kids) {
+    const list = kids || (childrenMap.get(node.id) || []);
+    const h = getH(node);
+    if (!list.length) { node.y = top; return h; }
+    let cursor = top;
+    for (const k of list) {
+      const kh = placeY(k, cursor, childrenMap.get(k.id));
+      cursor += kh + V_GAP;
+    }
+    const total = cursor - V_GAP - top;
+    const first = list[0], last = list[list.length - 1];
+    node.y = (first.y + (last.y + getH(last))) / 2 - h / 2;
+    return total;
+  }
+  // 向外范式：水平放置，dir=+1 向右 / -1 向左，标注 side
+  function placeX(node, x, dir, kids) {
+    node.x = x;
+    const list = kids || (childrenMap.get(node.id) || []);
+    const step = getW(node) + H_GAP;
+    for (const k of list) {
+      k.side = dir > 0 ? "right" : "left";
+      placeX(k, dir > 0 ? x + step : x - getW(k) - H_GAP, dir, childrenMap.get(k.id));
+    }
+  }
+  // 把一组兄弟（及其后代）从 top 起垂直堆叠，返回占用高度（不设父 y）
+  function stackY(list, top) {
+    let cursor = top;
+    for (const k of list) {
+      const kh = placeY(k, cursor, childrenMap.get(k.id));
+      cursor += kh + V_GAP;
+    }
+    return list.length ? cursor - V_GAP - top : 0;
+  }
+  // 向下范式：y 沿层级向下
+  function placeDownY(node, top, kids) {
+    const list = kids || (childrenMap.get(node.id) || []);
+    node.y = top;
+    const step = getH(node) + V_GAP;
+    for (const k of list) placeDownY(k, top + step, childrenMap.get(k.id));
+  }
+  // 向下范式：x 兄弟并排，父居中于子树
+  function placeDownX(node, left, kids) {
+    const list = kids || (childrenMap.get(node.id) || []);
+    node.x = left;
+    if (!list.length) return;
+    let cursor = left;
+    for (const k of list) { placeDownX(k, cursor, childrenMap.get(k.id)); cursor += subW(k) + H_GAP; }
+    const first = list[0].x;
+    const last = list[list.length - 1];
+    node.x = (first + (last.x + subW(last))) / 2 - getW(node) / 2;
+  }
+
+  for (const root of roots) {
+    root.side = "root";
+    const baseX = root.x || 0, baseY = root.y || 0;
+
+    if (layout === "structure") {
+      // 组织结构图：根在上，子向下展开
+      placeDownY(root, baseY);
+      placeDownX(root, baseX);
+
+    } else if (layout === "logicLeft") {
+      // 向左逻辑图：子树整体向左
+      placeX(root, baseX, -1);
+      placeY(root, baseY);
+
+    } else if (layout === "mindmap") {
+      // 经典双侧平衡：直接孩子按子树高度贪心分到左右
+      const direct = childrenMap.get(root.id) || [];
+      const sorted = [...direct].sort((a, b) => subH(b) - subH(a));
+      const leftG = [], rightG = [];
+      let lh = 0, rh = 0;
+      for (const k of sorted) {
+        if (lh <= rh) { leftG.push(k); lh += subH(k) + V_GAP; }
+        else { rightG.push(k); rh += subH(k) + V_GAP; }
+      }
+      const rh0 = Math.max(0, rh - V_GAP), lh0 = Math.max(0, lh - V_GAP);
+      root.y = Math.max(rh0, lh0) / 2 - getH(root) / 2;
+      if (rightG.length) {
+        placeX(root, baseX, +1, rightG);
+        stackY(rightG, root.y - rh0 / 2);
+      }
+      if (leftG.length) {
+        placeX(root, baseX, -1, leftG);
+        stackY(leftG, root.y - lh0 / 2);
+      }
+
+    } else {
+      // logicRight / list：全部向右（list 仅连线改折线，布局相同）
+      placeX(root, baseX, +1);
+      placeY(root, baseY);
+    }
+  }
 }

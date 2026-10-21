@@ -69,6 +69,13 @@ body {
   width: 34px; height: 34px; border-radius: 50%; cursor: pointer; border: 2px solid #fff; box-shadow: 0 0 0 1px #e8ecf1;
 }
 .gm-theme.active { box-shadow: 0 0 0 2px #11b5a4; }
+.gm-layouts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.gm-layouts button {
+  border: 1px solid #e8ecf1; background: #f7f9fb; color: #475569; border-radius: 10px;
+  padding: 9px 6px; font-size: 13px; cursor: pointer; transition: all .15s; text-align: center;
+}
+.gm-layouts button:hover { background: #eef3f7; }
+.gm-layouts button.active { border-color: #11b5a4; background: #e6f7f4; color: #0e8a7d; font-weight: 600; }
 .gm-actions { display: flex; flex-direction: column; gap: 8px; }
 .gm-actions .btn { width: 100%; }
 

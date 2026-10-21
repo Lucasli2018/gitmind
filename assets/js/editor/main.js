@@ -23,6 +23,14 @@ const THEMES = {
   ocean: ["#2f80ed", "#0ea5e9", "#14b8a6", "#6366f1", "#06b6d4", "#3b82f6"],
   sunset: ["#ff7a59", "#f5a623", "#e5484d", "#ff9f43", "#ee5253", "#ff6b6b"],
   forest: ["#16a34a", "#0e9f6e", "#65a30d", "#059669", "#10b981", "#22c55e"],
+  // 以下为新增主题（参考 simple-mind-map 配色风格）
+  classic: ["#2f54eb", "#13c2c2", "#fa8c16", "#722ed1", "#eb2f96", "#52c41a"],
+  blue: ["#1d4ed8", "#2563eb", "#0ea5e9", "#3b82f6", "#06b6d4", "#60a5fa"],
+  purple: ["#7c3aed", "#8b5cf6", "#a855f7", "#6d28d9", "#c026d3", "#9333ea"],
+  rose: ["#e11d48", "#f43f5e", "#fb7185", "#db2777", "#ec4899", "#f472b6"],
+  orange: ["#ea580c", "#f97316", "#fb923c", "#f59e0b", "#d97706", "#fbbf24"],
+  gray: ["#334155", "#475569", "#64748b", "#0f766e", "#7c3aed", "#0ea5e9"],
+  rainbow: ["#e5484d", "#f5a623", "#16a34a", "#0ea5e9", "#7c3aed", "#ec4899"],
 };
 let currentTheme = "teal";
 
@@ -105,6 +113,22 @@ function buildThemes() {
     el.addEventListener("click", () => applyTheme(name));
     box.appendChild(el);
   }
+}
+
+// ---------- 布局结构切换 ----------
+function setLayout(layout) {
+  if (editor.mode !== "mindmap") return;
+  layoutMindmap(editor.doc, layout);
+  editor.render();
+  editor.fitView(true);
+  editor.onChange();
+  document.querySelectorAll("#layouts button").forEach((b) => b.classList.toggle("active", b.dataset.layout === layout));
+}
+function buildLayouts() {
+  document.querySelectorAll("#layouts button").forEach((b) => b.addEventListener("click", () => setLayout(b.dataset.layout)));
+  // 同步当前文档布局的激活态
+  const cur = editor.doc.layout || "mindmap";
+  document.querySelectorAll("#layouts button").forEach((b) => b.classList.toggle("active", b.dataset.layout === cur));
 }
 
 // ---------- 工具栏 ----------
@@ -210,6 +234,7 @@ function wireChrome() {
   document.getElementById("zoomOut").addEventListener("click", () => { const r = editor.rect(); editor.zoomAt(1 / 1.2, r.left + r.width / 2, r.top + r.height / 2); });
   document.getElementById("zoomFit").addEventListener("click", () => editor.fitView());
   document.getElementById("layoutBtn").addEventListener("click", () => { layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); });
+  buildLayouts();
   document.getElementById("outlineBtn").addEventListener("click", () => openOutline(editor));
   document.getElementById("delBtn").addEventListener("click", () => editor.deleteSelection());
   document.querySelectorAll("#modes button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));

@@ -89,6 +89,60 @@ export const TEMPLATES = [
     ]),
   },
   {
+    id: "swot", name: "SWOT 分析", type: "mindmap", desc: "优劣势与机会威胁", icon: "compass",
+    build: () => buildMindmap("SWOT 分析", [
+      { text: "优势 S", children: [{ text: "内部强项" }, { text: "资源壁垒" }] },
+      { text: "劣势 W", children: [{ text: "内部短板" }, { text: "资源缺口" }] },
+      { text: "机会 O", children: [{ text: "市场趋势" }, { text: "政策利好" }] },
+      { text: "威胁 T", children: [{ text: "竞品压力" }, { text: "外部风险" }] },
+    ]),
+  },
+  {
+    id: "decision", name: "决策分析", type: "mindmap", desc: "多方案量化对比", icon: "scale",
+    build: () => buildMindmap("决策主题", [
+      { text: "方案 A", children: [{ text: "成本" }, { text: "收益" }, { text: "风险" }] },
+      { text: "方案 B", children: [{ text: "成本" }, { text: "收益" }, { text: "风险" }] },
+      { text: "评估维度", children: [{ text: "可行性" }, { text: "ROI" }, { text: "时效" }] },
+      { text: "结论建议" },
+    ]),
+  },
+  {
+    id: "weekly", name: "周报复盘", type: "mindmap", desc: "本周复盘与下周计划", icon: "calendar",
+    build: () => buildMindmap("第 N 周复盘", [
+      { text: "本周完成", children: [{ text: "关键产出" }, { text: "进度%" }] },
+      { text: "问题与改进", children: [{ text: "阻塞点" }, { text: "改进项" }] },
+      { text: "下周计划", children: [{ text: "优先事项" }, { text: "目标" }] },
+      { text: "所需支持" },
+    ]),
+  },
+  {
+    id: "roadmap", name: "学习路线图", type: "mindmap", desc: "技能进阶路径规划", icon: "path",
+    build: () => buildMindmap("学习主题", [
+      { text: "基础", children: [{ text: "概念" }, { text: "工具" }] },
+      { text: "进阶", children: [{ text: "核心原理" }, { text: "实战" }] },
+      { text: "高级", children: [{ text: "源码 / 调优" }, { text: "最佳实践" }] },
+      { text: "资源清单" },
+    ]),
+  },
+  {
+    id: "prd", name: "产品需求拆解", type: "mindmap", desc: "从目标到功能清单", icon: "box",
+    build: () => buildMindmap("产品名", [
+      { text: "目标用户", children: [{ text: "画像" }, { text: "痛点" }] },
+      { text: "核心场景", children: [{ text: "场景一" }, { text: "场景二" }] },
+      { text: "功能清单", children: [{ text: "MVP" }, { text: "迭代项" }] },
+      { text: "成功指标" },
+    ]),
+  },
+  {
+    id: "travel", name: "旅行计划", type: "mindmap", desc: "行程 / 预算 / 清单", icon: "plane",
+    build: () => buildMindmap("目的地", [
+      { text: "行程安排", children: [{ text: "Day1" }, { text: "Day2" }, { text: "Day3" }] },
+      { text: "预算", children: [{ text: "交通" }, { text: "住宿" }, { text: "餐饮" }] },
+      { text: "行李清单", children: [{ text: "证件" }, { text: "衣物" }] },
+      { text: "注意事项" },
+    ]),
+  },
+  {
     id: "leave", name: "流程图示例", type: "flowchart", desc: "请假审批流程", icon: "flow",
     build: () => buildLeaveFlow(),
   },
