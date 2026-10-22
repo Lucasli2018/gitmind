@@ -52,4 +52,9 @@ export const ICONS = {
   note: S(`<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/>`),
   smiley: S(`<circle cx="12" cy="12" r="9"/><path d="M8.5 14a4.5 4.5 0 0 0 7 0"/><path d="M9 9.5h.01M15 9.5h.01"/>`),
   assoc: S(`<circle cx="5.5" cy="6" r="2.5"/><circle cx="18.5" cy="18" r="2.5"/><path d="M7.8 7.2C11 9 13 11 16.2 16.8" stroke-dasharray="3 2.5"/>`),
+  // 脑图：外框（虚线框）/ 概括（大括号）/ 侧栏：属性（滑杆）/ 设置（齿轮）
+  frameBox: S(`<rect x="3" y="5" width="18" height="14" rx="3" stroke-dasharray="4 3"/><path d="M8 12h8"/>`),
+  summary: S(`<path d="M10 4c-2.6 0-2.6 3.2-2.6 5.2 0 1.6-1 2.4-2.4 2.8 1.4.4 2.4 1.2 2.4 2.8 0 2 0 5.2 2.6 5.2"/>`),
+  sliders: S(`<path d="M4 8h10M18 8h2M4 16h4M12 16h8"/><circle cx="16" cy="8" r="2.2"/><circle cx="10" cy="16" r="2.2"/>`),
+  gear: S(`<circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1"/>`),
 };

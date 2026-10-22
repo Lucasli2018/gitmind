@@ -201,16 +201,35 @@ const MM_TOOLS = [
   { act: "href", label: "超链接", icon: "link" },
   { act: "note", label: "备注", icon: "note" },
 
+  { act: "summary", label: "概括", icon: "summary" },
+  { act: "frame", label: "外框", icon: "frameBox" },
   { act: "link", label: "关联线", icon: "assoc", key: "L" },
   { act: "layout", label: "整理布局", icon: "fit" },
 ];
 const MM_EMOJIS = ["💡", "⭐", "🔥", "✅", "❌", "❓", "❗", "🎯", "📌", "🚩", "🚀", "⏰", "📅", "👤", "💰", "📄", "📊", "🔑", "🔒", "🧠", "😊", "🎉", "⚠️", "❤️"];
+// ---------- 工具栏弹层（挂到 body，修复被 .gm-wb-bar overflow 裁剪的问题） ----------
+let _bodyPop = null; // { anchor, el }
+function closeBodyPop() {
+  if (_bodyPop) { _bodyPop.el.remove(); _bodyPop = null; }
+}
+// 在锚点按钮下方弹出一个浮层（重复点同一个锚点 = 关闭；点其他区域自动关）
+function toggleBodyPop(anchor, pop) {
+  if (_bodyPop && _bodyPop.anchor === anchor) { closeBodyPop(); return; }
+  closeBodyPop();
+  pop.classList.add("gm-body-pop");
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8));
+  pop.style.left = left + "px";
+  pop.style.top = Math.min(r.bottom + 8, window.innerHeight - pop.offsetHeight - 8) + "px";
+  _bodyPop = { anchor, el: pop };
+}
 function buildMmBar(bar) {
   bar.innerHTML = "";
   bar.classList.add("gm-fc-bar");
   const groupOf = (act) => (act === "undo" || act === "redo" || act === "hand" ? 1
     : act === "child" || act === "sibling" || act === "delete" ? 2
-    : act === "image" || act === "icon" || act === "href" || act === "note" ? 3 : 4);
+    : act === "image" || act === "icon" || act === "href" || act === "note" || act === "summary" || act === "frame" ? 3 : 4);
   let lastGroup = null;
   for (const t of MM_TOOLS) {
     const group = groupOf(t.act);
@@ -222,22 +241,20 @@ function buildMmBar(bar) {
     b.title = t.key ? `${t.label} (${t.key})` : t.label;
     b.innerHTML = `${ICONS[t.icon] || ""}<span class="lbl">${t.label}</span>`;
     if (t.act === "icon") {
-      // 图标按钮：emoji 网格弹层，再点同一个 emoji 取消
-      const wrap = document.createElement("div");
-      wrap.className = "gm-wb-more";
-      const pop = document.createElement("div");
-      pop.className = "pop gm-emoji-pop";
-      for (const em of MM_EMOJIS) {
-        const it = document.createElement("button");
-        it.textContent = em;
-        it.addEventListener("click", (ev) => { ev.stopPropagation(); wrap.classList.remove("open"); onMmAction("icon", em); });
-        pop.appendChild(it);
-      }
-      b.addEventListener("click", (e) => { e.stopPropagation(); wrap.classList.toggle("open"); });
-      pop.addEventListener("click", (e) => e.stopPropagation());
-      wrap.appendChild(b);
-      wrap.appendChild(pop);
-      bar.appendChild(wrap);
+      // 图标按钮：emoji 网格弹层（挂 body 避免被工具栏裁剪），再点同一个 emoji 取消
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const pop = document.createElement("div");
+        pop.className = "gm-emoji-pop";
+        for (const em of MM_EMOJIS) {
+          const it = document.createElement("button");
+          it.textContent = em;
+          it.addEventListener("click", (ev) => { ev.stopPropagation(); closeBodyPop(); onMmAction("icon", em); });
+          pop.appendChild(it);
+        }
+        toggleBodyPop(b, pop);
+      });
+      bar.appendChild(b);
       continue;
     }
     b.addEventListener("click", () => onMmAction(t.act));
@@ -272,9 +289,20 @@ function onMmAction(act, arg) {
   }
   if (act === "note") {
     if (needNode()) return;
-    const txt = prompt("输入备注内容（留空移除，悬停节点徽标可查看）", node.note || "");
-    if (txt === null) return;
-    editor.setNodeStyle({ note: txt.trim() || null });
+    openNoteModal(node);
+    return;
+  }
+  if (act === "summary") {
+    if (needNode()) return;
+    if (node.summary) { editor.setNodeStyle({ summary: null, summaryText: null }); toast("已移除概括", "info"); }
+    else openSummaryModal(node);
+    return;
+  }
+  if (act === "frame") {
+    if (needNode()) return;
+    const on = !node.framed;
+    editor.setNodeStyle({ framed: on ? true : null });
+    toast(on ? "已为该分支添加外框" : "已移除外框", "info");
     return;
   }
   if (act === "link") {
@@ -282,6 +310,45 @@ function onMmAction(act, arg) {
     refreshFcActive();
     if (editor.tool === "link") toast("关联线：先点起始节点，再点目标节点", "info");
   }
+}
+
+// ---------- 备注 / 概括 弹框（输入与展示都用居中模态） ----------
+function escapeModalText(s) {
+  return (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+function openNoteModal(node) {
+  const close = showModal("备注",
+    `<textarea id="gmNoteTa" class="gm-note-ta" placeholder="输入备注内容…（留空保存则移除备注）">${escapeModalText(node.note || "")}</textarea>` +
+    `<div class="gm-modal-acts" style="margin-top:14px">` +
+    `<button class="btn btn-ghost btn-sm" id="gmNoteDel">删除备注</button>` +
+    `<button class="btn gm-btn-coral btn-sm" id="gmNoteSave">保存</button></div>`);
+  const ta = document.getElementById("gmNoteTa");
+  setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
+  document.getElementById("gmNoteSave").addEventListener("click", () => {
+    editor.setNodeStyle({ note: ta.value.trim() || null });
+    toast(ta.value.trim() ? "备注已保存，点击节点右上角「注」徽标可再次查看" : "已移除备注", "success");
+    close();
+  });
+  document.getElementById("gmNoteDel").addEventListener("click", () => {
+    editor.setNodeStyle({ note: null });
+    toast("已移除备注", "info");
+    close();
+  });
+}
+function openSummaryModal(node) {
+  const close = showModal("概括",
+    `<div style="font-size:13px;color:#6b7686;margin-bottom:8px">为「${escapeModalText((node.text || "").slice(0, 20))}」分支添加概括：大括号 + 标签标注在子树右侧</div>` +
+    `<input id="gmSummaryInput" class="gm-note-ta" style="min-height:0;padding:9px 12px" maxlength="20" placeholder="概要" value="${escapeModalText(node.summaryText || "概要")}" />` +
+    `<div class="gm-modal-acts" style="margin-top:14px">` +
+    `<button class="btn btn-ghost btn-sm" data-close>取消</button>` +
+    `<button class="btn gm-btn-coral btn-sm" id="gmSummarySave">添加</button></div>`);
+  const inp = document.getElementById("gmSummaryInput");
+  setTimeout(() => { inp.focus(); inp.select(); }, 0);
+  document.querySelector("#gmSummarySave").addEventListener("click", () => {
+    editor.setNodeStyle({ summary: true, summaryText: inp.value.trim() || "概要" });
+    close();
+  });
+  document.querySelector("[data-close]").addEventListener("click", close);
 }
 
 // ---------- 脑图节点样式面板（左侧浮动，选中节点时显示，参考 mind-map 节点样式） ----------
@@ -333,6 +400,112 @@ function renderMmNodePanel(panel) {
   });
   // 重渲染面板（保留在原位）
   function refreshMmPanelKeep() { renderMmNodePanel(panel); }
+}
+
+// ---------- 右侧图标栏（属性 / 主题 / 结构 / 大纲 / 设置，参考 mind-map） ----------
+// 编辑器行为设置（localStorage 持久化，应用到 editor 实例）
+const GM_SETTINGS_KEY = "gm_editor_settings";
+let settings = { grid: false, autoEdit: true, dblCreate: false, wheelPan: false };
+try { Object.assign(settings, JSON.parse(localStorage.getItem(GM_SETTINGS_KEY) || "{}")); } catch (_) {}
+function saveSettings() {
+  try { localStorage.setItem(GM_SETTINGS_KEY, JSON.stringify(settings)); } catch (_) {}
+}
+function applySettings() {
+  if (!editor) return;
+  editor.showGrid = !!settings.grid;
+  editor.autoEditNewNode = settings.autoEdit !== false;
+  editor.dblClickCreate = !!settings.dblCreate;
+  editor.wheelPan = !!settings.wheelPan;
+  editor.render();
+}
+function buildSideRail() {
+  const bodyEl = document.querySelector(".gm-body");
+  if (!bodyEl) return;
+  const rail = document.createElement("div");
+  rail.className = "gm-side-rail";
+  const items = [
+    { act: "attr", label: "属性", icon: "sliders" },
+    { act: "theme", label: "主题", icon: "theme" },
+    { act: "structure", label: "结构", icon: "flow" },
+    { act: "outline", label: "大纲", icon: "outline" },
+    { act: "settings", label: "设置", icon: "gear" },
+  ];
+  for (const it of items) {
+    const b = document.createElement("button");
+    b.dataset.act = it.act;
+    b.innerHTML = `${ICONS[it.icon] || ""}<span class="lbl">${it.label}</span>`;
+    b.title = it.label;
+    b.addEventListener("click", () => onRailAction(it.act, b));
+    rail.appendChild(b);
+  }
+  // 插到画布之后、右侧说明栏之前
+  const right = bodyEl.querySelector(".gm-right");
+  bodyEl.insertBefore(rail, right || null);
+}
+function onRailAction(act, btn) {
+  if (act === "attr") {
+    // 属性：选中节点并打开样式面板（脑图无选中时默认选中心主题）
+    if (!editor.selection.size) {
+      const root = editor.doc.nodes.find((n) => n.parentId == null) || editor.doc.nodes[0];
+      if (root) { editor.selection = new Set([root.id]); editor.render(); }
+      else { toast("请先选中一个元素", "info"); return; }
+    }
+    editor.render(); // 触发 onSelectionChange -> 刷新样式面板
+    flashPanel(document.getElementById("wbStylePanel"));
+  } else if (act === "theme" || act === "structure") {
+    const target = document.getElementById(act === "theme" ? "themePanel" : "layoutPanel");
+    if (target) { target.scrollIntoView({ behavior: "smooth", block: "center" }); flashPanel(target); }
+  } else if (act === "outline") {
+    openOutline(editor);
+  } else if (act === "settings") {
+    toggleSettingsPanel(btn);
+  }
+}
+// 面板高亮提示（短暂描边）
+function flashPanel(el) {
+  if (!el) return;
+  el.classList.remove("gm-flash");
+  void el.offsetWidth;
+  el.classList.add("gm-flash");
+}
+// 设置面板（挂 body 的固定定位卡片，再点设置按钮关闭）
+function toggleSettingsPanel(btn) {
+  const exist = document.getElementById("gmSettingsPanel");
+  if (exist) { exist.remove(); return; }
+  const panel = document.createElement("div");
+  panel.className = "gm-set-panel";
+  panel.id = "gmSettingsPanel";
+  const chk = (k, label, tip) =>
+    `<label class="gm-set-row" title="${tip || ""}"><input type="checkbox" data-set="${k}"${settings[k] ? " checked" : ""}/><span>${label}</span></label>`;
+  panel.innerHTML =
+    `<div class="gm-set-head"><b>设置</b><button class="gm-set-x" aria-label="关闭">×</button></div>` +
+    chk("grid", "显示网格", "在画布上显示点状网格") +
+    chk("autoEdit", "新节点自动进入编辑", "新建节点后直接开始输入文字") +
+    chk("dblCreate", "双击空白处创建子节点", "双击画布空白处在中心主题下新增节点") +
+    `<div class="gm-set-t">鼠标滚轮行为</div>` +
+    `<div class="gm-set-seg">` +
+    `<button data-wheel="0"${!settings.wheelPan ? ' class="active"' : ""}>缩放视图</button>` +
+    `<button data-wheel="1"${settings.wheelPan ? ' class="active"' : ""}>上下平移</button>` +
+    `</div>`;
+  panel.querySelector(".gm-set-x").addEventListener("click", () => panel.remove());
+  panel.querySelectorAll("[data-set]").forEach((c) => {
+    c.addEventListener("change", () => {
+      settings[c.dataset.set] = c.checked;
+      saveSettings(); applySettings();
+    });
+  });
+  panel.querySelectorAll("[data-wheel]").forEach((b) => {
+    b.addEventListener("click", () => {
+      settings.wheelPan = b.dataset.wheel === "1";
+      saveSettings(); applySettings();
+      panel.querySelectorAll("[data-wheel]").forEach((x) => x.classList.toggle("active", x === b));
+    });
+  });
+  document.body.appendChild(panel);
+  // 贴在触发按钮左侧
+  const r = btn.getBoundingClientRect();
+  panel.style.top = Math.min(r.top, window.innerHeight - panel.offsetHeight - 12) + "px";
+  panel.style.right = Math.max(10, window.innerWidth - r.left + 8) + "px";
 }
 
 // 流程图顶部工具栏（图标在上、文字在下，参考 mind-map）
@@ -400,25 +573,24 @@ function buildWbBar(bar) {
   }
   bar.appendChild(wbSep());
   // 更多菜单：嵌入网页 / 便签 / 清空白板（颜色在左侧属性面板中选择，顶栏不再重复）
-  const more = document.createElement("div");
-  more.className = "gm-wb-more";
+  // 弹层挂 body（toggleBodyPop），避免被工具栏 overflow-y:hidden 裁剪
   const mb = document.createElement("button");
   mb.className = "gm-wb-btn";
   mb.title = "更多";
   mb.innerHTML = ICONS.menu;
-  const pop = document.createElement("div");
-  pop.className = "pop";
-  for (const m of WB_MORE) {
-    const item = document.createElement("button");
-    item.innerHTML = `${ICONS[m.icon] || ""}<span>${m.label}</span>${m.key ? `<span class="kbd">${m.key}</span>` : ""}`;
-    item.addEventListener("click", () => { more.classList.remove("open"); onWbMore(m.act); });
-    pop.appendChild(item);
-  }
-  mb.addEventListener("click", (e) => { e.stopPropagation(); more.classList.toggle("open"); });
-  pop.addEventListener("click", (e) => e.stopPropagation());
-  more.appendChild(mb);
-  more.appendChild(pop);
-  bar.appendChild(more);
+  mb.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const pop = document.createElement("div");
+    pop.className = "pop gm-more-menu";
+    for (const m of WB_MORE) {
+      const item = document.createElement("button");
+      item.innerHTML = `${ICONS[m.icon] || ""}<span>${m.label}</span>${m.key ? `<span class="kbd">${m.key}</span>` : ""}`;
+      item.addEventListener("click", () => { closeBodyPop(); onWbMore(m.act); });
+      pop.appendChild(item);
+    }
+    toggleBodyPop(mb, pop);
+  });
+  bar.appendChild(mb);
   refreshWbActive();
 }
 function wbSep() {
@@ -748,7 +920,8 @@ function updateHelpKeys() {
   } else {
     el.innerHTML =
       `脑图：Tab 加子节点 · Enter 加同级<br/>` +
-      `关联线 L（点起点再点目标，或拖节点四角端点连线，自动吸附）· 图片 / 图标 / 超链接 / 备注 在顶部工具栏<br/>` +
+      `概括 / 外框 / 图片 / 图标 / 超链接 / 备注在顶部工具栏<br/>` +
+      `备注：点「注」徽标或工具栏按钮弹框查看 / 编辑<br/>` +
       `选中节点：左侧面板改样式（颜色/字号/加粗/形状）<br/>` +
       `删除：Delete / Backspace<br/>` +
       `撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y / ⌘+Shift+Z<br/>` +
@@ -787,11 +960,13 @@ const SHORTCUTS = {
   },
   mindmap: {
     工具: [
-      ["加子节点", ["Tab"]], ["加同级节点", ["Enter"]], ["关联线", ["L"]],
-      ["抓手 / 平移", ["H"]], ["图片 / 图标", ["选中节点", "点顶部工具栏"]], ["超链接 / 备注", ["选中节点", "点顶部工具栏"]],
+      ["加子节点", ["Tab"]], ["加同级节点", ["Enter"]], ["关联线", ["L"]], ["抓手 / 平移", ["H"]],
+      ["概括 / 外框", ["选中节点", "点顶部工具栏"]],
+      ["图片 / 图标", ["选中节点", "点顶部工具栏"]], ["超链接 / 备注", ["选中节点", "点顶部工具栏"]],
     ],
     编辑器: [
-      ["节点样式", ["选中节点", "左侧面板"]], ["框选多选", ["拖空白处", "或", "Shift+拖"]],
+      ["节点样式", ["选中节点", "左侧面板"]], ["备注弹框", ["点节点「注」徽标"]],
+      ["框选多选", ["拖空白处", "或", "Shift+拖"]],
       ["关联线吸附", ["拖节点四角端点", "或", "悬停自动吸附"]],
       ["移动画布", ["抓手 H", "/", "中键拖拽", "或", "Alt+拖拽"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]],
       ["删除", ["Delete"]], ["撤销 / 重做", ["Ctrl+Z", "/", "Ctrl+Y"]], ["保存", ["Ctrl+S"]],
@@ -950,8 +1125,11 @@ function wireChrome() {
   titleInput.addEventListener("input", () => { map.title = titleInput.value; scheduleSave(); });
   wireBottomBars();
   wireMobileDrawers();
-  // 点击空白处关闭工具栏弹层（emoji 选择等）
-  document.addEventListener("click", () => document.querySelectorAll(".gm-wb-more.open").forEach((m) => m.classList.remove("open")));
+  // 点击空白处关闭工具栏弹层（图标选择等，挂 body 的浮层统一由 closeBodyPop 管理）
+  document.addEventListener("click", (e) => {
+    if (_bodyPop && !_bodyPop.el.contains(e.target) && !_bodyPop.anchor.contains(e.target)) closeBodyPop();
+    document.querySelectorAll(".gm-wb-more.open").forEach((m) => m.classList.remove("open"));
+  });
   // 每分钟自动保存一次（替代实时保存），操作时不发请求以提升流畅度
   autosaveTimer = setInterval(autosaveTick, AUTOSAVE_MS);
   // 兜底：切走/关闭页面若有未保存改动，立即落盘，最多丢 <1 分钟
@@ -1044,7 +1222,7 @@ function wireKeys() {
   document.getElementById("titleInput").value = map.title || "未命名导图";
   document.getElementById("shareBtn").textContent = map.is_public ? "已分享" : "分享";
 
-  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), mode: map.type || "mindmap" });
+  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), mode: map.type || "mindmap", onNoteBadge: (id) => { const n = editor.nodeById(id); if (n) openNoteModal(n); } });
   window.__gmEditor = editor; // 测试钩子：headless 验证用
   wireWbContextMenu();
   editor.load(map.data);
@@ -1059,4 +1237,6 @@ function wireKeys() {
   wireChrome();
   wireExport();
   wireKeys();
+  buildSideRail();
+  applySettings();
 })();

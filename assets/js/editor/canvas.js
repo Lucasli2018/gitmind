@@ -30,6 +30,11 @@ export class Editor {
     this._newShape = null; this._erasing = false; this._laser = null; this._laserRaf = null;
     this._marquee = null; this._laserDown = false;
     this._onToolChange = opts.onToolChange || null;
+    // 编辑器行为设置（侧栏「设置」面板驱动，main.js 持久化）
+    this.autoEditNewNode = true;  // 新节点自动进入文字编辑
+    this.dblClickCreate = false;  // 双击空白处创建子节点（脑图）
+    this.wheelPan = false;        // 滚轮上下平移视图（false = 缩放）
+    this._onNoteBadge = opts.onNoteBadge || null; // 点击节点备注徽标 -> 弹框查看/编辑
     // 撤销/重做历史栈（快照式，仅存数据不含视图）
     this._history = []; this._hidx = -1; this._restoring = false;
     this._updateUndoRedoButtons = opts.onUndoRedoState || null;
@@ -196,6 +201,13 @@ export class Editor {
     let html = "";
     // 白板网格（不进导出）
     if (this.showGrid && !this._forExport) html += this.gridHTML();
+    // 脑图：外框（虚线圈住节点子树）/ 概括（大括号 + 标签），垫在连线之下
+    if (this.doc.type === "mindmap") {
+      for (const n of this.doc.nodes) {
+        if (n.framed) html += this.frameHTML(n);
+        if (n.summary) html += this.summaryHTML(n);
+      }
+    }
     // 边（脑图模式按 parentId 派生连线，保证父子之间始终有线）
     let edges = this.doc.edges;
     if (this.doc.type === "mindmap") {
@@ -386,15 +398,16 @@ export class Editor {
       if (img) inner += `<image href="${escapeXml(n.image)}" x="${((w - img.w) / 2).toFixed(1)}" y="8" width="${img.w}" height="${img.h}" preserveAspectRatio="xMidYMid meet"/>`;
       inner += `<text x="${tx}" y="${baseY}" text-anchor="${anchor}" font-size="${fs}" font-family='${fam}'${italic}${deco} fill="${tcolor}" font-weight="${weight}">${tspans}</text>`;
     }
-    // 脑图节点徽标：备注（橙色）/ 超链接（蓝色，可点击打开），悬停显示内容
+    // 脑图节点徽标：备注（橙色，点击弹框查看/编辑）/ 超链接（蓝色，可点击打开）
     if (this.doc.type === "mindmap" && (n.note || n.href)) {
-      let bx = w - 2;
+      let bx = w - 6;
       if (n.note) {
-        inner += `<g transform="translate(${bx},-4)"><title>${escapeXml(n.note)}</title><circle r="8" fill="#ff9f43" stroke="#fff" stroke-width="1.5"/><text y="3.5" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">注</text></g>`;
-        bx -= 20;
+        const click = this._forExport ? "" : `class="gm-note-badge" data-note="${n.id}" style="cursor:pointer"`;
+        inner += `<g ${click} transform="translate(${bx},-6)"><title>备注：${escapeXml(n.note)}</title><circle r="8" fill="#ff9f43" stroke="#fff" stroke-width="1.5"/><text y="3.5" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">注</text></g>`;
+        bx -= 21;
       }
       if (n.href) {
-        inner += `<a href="${escapeXml(n.href)}" target="_blank" rel="noopener"><g transform="translate(${bx},-4)"><title>${escapeXml(n.href)}</title><circle r="8" fill="#2f80ed" stroke="#fff" stroke-width="1.5"/><text y="3.5" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">链</text></g></a>`;
+        inner += `<a href="${escapeXml(n.href)}" target="_blank" rel="noopener"><g transform="translate(${bx},-6)"><title>${escapeXml(n.href)}</title><circle r="8" fill="#2f80ed" stroke="#fff" stroke-width="1.5"/><text y="3.5" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">链</text></g></a>`;
       }
     }
     // 选中框（直线/箭头 w、h 可能是负增量，选中框按包围盒画）
@@ -528,6 +541,43 @@ export class Editor {
     return { x: cx + dx * t, y: cy + dy * t };
   }
 
+  // ---------- 脑图：外框 / 概括 ----------
+  // 节点及其全部后代的包围盒（世界坐标）
+  subtreeBBox(id) {
+    const ids = this.descendants(id); ids.add(id);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const nid of ids) {
+      const n = this.nodeById(nid); if (!n) continue;
+      const b = this.nodeBBox(n);
+      minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
+      maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
+    }
+    if (minX === Infinity) return null;
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+  // 外框：虚线圆角矩形圈住子树（颜色随分支描边色）
+  frameHTML(n) {
+    const b = this.subtreeBBox(n.id);
+    if (!b) return "";
+    const col = n.stroke || "#2f80ed";
+    const pad = 14;
+    return `<rect x="${(b.x - pad).toFixed(1)}" y="${(b.y - pad).toFixed(1)}" width="${(b.w + pad * 2).toFixed(1)}" height="${(b.h + pad * 2).toFixed(1)}" rx="12" fill="${col}14" stroke="${col}" stroke-width="1.8" stroke-dasharray="7 5"/>`;
+  }
+  // 概括：子树右侧的大括号 + 标签（n.summaryText，默认「概要」）
+  summaryHTML(n) {
+    const b = this.subtreeBBox(n.id);
+    if (!b) return "";
+    const col = n.stroke || "#f5a623";
+    const x = b.x + b.w + 10, y0 = b.y, y1 = b.y + b.h, ym = (y0 + y1) / 2;
+    const k = Math.min(9, Math.max(5, (y1 - y0) * 0.25));
+    const d = `M ${x.toFixed(1)},${y0.toFixed(1)} Q ${(x + 9).toFixed(1)},${y0.toFixed(1)} ${(x + 9).toFixed(1)},${(y0 + k).toFixed(1)} L ${(x + 9).toFixed(1)},${(ym - k).toFixed(1)} Q ${(x + 9).toFixed(1)},${ym.toFixed(1)} ${(x + 16).toFixed(1)},${ym.toFixed(1)} Q ${(x + 9).toFixed(1)},${ym.toFixed(1)} ${(x + 9).toFixed(1)},${(ym + k).toFixed(1)} L ${(x + 9).toFixed(1)},${(y1 - k).toFixed(1)} Q ${(x + 9).toFixed(1)},${y1.toFixed(1)} ${x.toFixed(1)},${y1.toFixed(1)}`;
+    const label = n.summaryText || "概要";
+    const lw = Math.max(36, label.length * 14 + 18);
+    return `<path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linecap="round"/>` +
+      `<rect x="${(x + 24).toFixed(1)}" y="${(ym - 15).toFixed(1)}" width="${lw}" height="30" rx="8" fill="#fff" stroke="${col}" stroke-width="1.5"/>` +
+      `<text x="${(x + 24 + lw / 2).toFixed(1)}" y="${(ym + 5).toFixed(1)}" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2a37" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(label)}</text>`;
+  }
+
   // 关联线自动吸附：光标所在 / 附近（26px 容差）的最近节点 id，无则 null
   snapNodeAt(clientX, clientY) {
     const w = this.toWorld(clientX, clientY);
@@ -578,6 +628,8 @@ export class Editor {
   }
   onWheel(e) {
     e.preventDefault();
+    // 设置：滚轮行为可切换为上下平移视图
+    if (this.wheelPan) { this.panBy(0, -e.deltaY); return; }
     const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
     this.zoomAt(factor, e.clientX, e.clientY);
   }
@@ -643,6 +695,14 @@ export class Editor {
     // ---------- 抓手工具（脑图 / 流程图 / 白板通用）：拖拽平移画布 ----------
     if (this.tool === "hand") {
       this._pan = { sx, sy, ox: this.view.x, oy: this.view.y };
+      return;
+    }
+
+    // ---------- 备注徽标：按下即记录（pointerup 时弹框），不触发选择/拖拽 ----------
+    // （不能用 click 委托：按下后 select() 重渲染会替换 DOM，click 目标丢失）
+    const badgeEl = target.closest && target.closest(".gm-note-badge");
+    if (badgeEl && this.mode === "mindmap") {
+      this._pendingBadge = badgeEl.getAttribute("data-note");
       return;
     }
 
@@ -877,6 +937,13 @@ export class Editor {
   }
 
   onUp(e) {
+    // 备注徽标：pointerup 时打开备注弹框（任何拖拽分支之前处理）
+    if (this._pendingBadge) {
+      const id = this._pendingBadge;
+      this._pendingBadge = null;
+      if (this._onNoteBadge) this._onNoteBadge(id);
+      return;
+    }
     if (this._marquee) { this._marquee = null; this.render(); return; } // 选择已在拖拽中实时应用
     if (this._handle) { if (this._handle.moved) { this.onChange(); this.pushHistory(); } this._handle = null; return; }
     if (this._newShape) { this.finishNewShape(); return; }
@@ -905,7 +972,14 @@ export class Editor {
   onDblClick(e) {
     if (this.readOnly) return;
     const hitEl = e.target.closest && e.target.closest("[data-id]");
-    if (!hitEl) return;
+    if (!hitEl) {
+      // 设置：双击空白处创建子节点（脑图，挂在中心主题下）
+      if (this.mode === "mindmap" && this.dblClickCreate) {
+        const root = this.doc.nodes.find((n) => n.parentId == null);
+        if (root) this.addMindmapChild(root.id);
+      }
+      return;
+    }
     const n = this.nodeById(hitEl.getAttribute("data-id"));
     if (!n) return;
     if (n.shape === "embed") {
@@ -1027,7 +1101,7 @@ export class Editor {
     this.selection = new Set([id]);
     this.render(); this.onChange();
     this.pushHistory();
-    this.beginTextEdit(id);
+    if (this.autoEditNewNode) this.beginTextEdit(id);
     return id;
   }
   addMindmapSibling(nodeId) {
@@ -1040,7 +1114,7 @@ export class Editor {
     this.selection = new Set([id]);
     this.render(); this.onChange();
     this.pushHistory();
-    this.beginTextEdit(id);
+    if (this.autoEditNewNode) this.beginTextEdit(id);
     return id;
   }
   deleteSelection() {
