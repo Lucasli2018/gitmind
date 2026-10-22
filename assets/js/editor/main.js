@@ -629,9 +629,51 @@ function refreshWbActive() {
 // 背景色板（首项为透明）；描边色复用 WB_COLORS 与顶栏色板保持一致
 const WB_BG_COLORS = ["transparent", "#ffc9c9", "#b2f2bb", "#a5d8ff", "#ffec99", "#d0bfff", "#ffffff"];
 const WB_SHAPE_TOOLS = ["rect", "diamond", "ellipse", "arrow", "line", "pen", "text"];
+function renderEdgeStylePanel(panel, eid) {
+  const e = editor.edgeById(eid);
+  if (!e) { panel.hidden = true; return; }
+  panel.hidden = false;
+  const cur = {
+    stroke: e.stroke || (e.assoc ? "#ff9f43" : (e.derived ? "#11b5a4" : "#94a3b8")),
+    strokeWidth: e.strokeWidth || 2,
+    strokeStyle: e.strokeStyle || (e.assoc ? "dashed" : "solid"),
+  };
+  const cols = ["#94a3b8", "#11b5a4", "#ff9f43", "#ef4444", "#3b82f6", "#8b5cf6", "#1f2a37"];
+  const colBtn = (c) => `<button class="gm-ws-swatch${c === cur.stroke ? " active" : ""}" data-ek="stroke" data-ev="${c}" title="${c}" style="background:${c}"></button>`;
+  const wBtn = (v) => `<button class="gm-ws-seg${cur.strokeWidth === v ? " active" : ""}" data-ek="strokeWidth" data-ev="${v}" title="${v === 2 ? "细" : v === 4 ? "中" : "粗"}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="${v}"/></svg></button>`;
+  const sBtn = (v, t, dash) => `<button class="gm-ws-seg${cur.strokeStyle === v ? " active" : ""}" data-ek="strokeStyle" data-ev="${v}" title="${t}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="2"${dash}/></svg></button>`;
+  panel.innerHTML =
+    `<div class="gm-ws-t">连线样式</div>` +
+    `<div class="gm-ws-row">${cols.map(colBtn).join("")}</div>` +
+    `<div class="gm-ws-t">线宽</div>` +
+    `<div class="gm-ws-row seg">${wBtn(2) + wBtn(4) + wBtn(6)}</div>` +
+    `<div class="gm-ws-t">线型</div>` +
+    `<div class="gm-ws-row seg">${sBtn("solid", "实线", "") + sBtn("dashed", "虚线", ' stroke-dasharray="5 3"') + sBtn("dotted", "点线", ' stroke-dasharray="0.5 3.5" stroke-linecap="round"')}</div>` +
+    `<div class="gm-ws-t">形状</div>` +
+    `<div class="gm-ws-row seg">` +
+      `<button class="gm-ws-seg" data-ek="bend" data-ev="curve" title="恢复曲线">⌒</button>` +
+      `<button class="gm-ws-seg" data-ek="bend" data-ev="straight" title="拉直">—</button>` +
+    `</div>` +
+    (e.label != null ? `<div class="gm-ws-row"><button class="gm-ws-seg" data-ek="label" data-ev="edit" title="编辑文字">编辑文字</button></div>` : "") +
+    `<div class="gm-ws-row"><button class="gm-ws-seg danger" data-ek="del" data-ev="1" title="删除连线">删除连线</button></div>`;
+  panel.querySelectorAll("[data-ek]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const k = b.dataset.ek, v = b.dataset.ev;
+      if (k === "strokeWidth") editor.setEdgeStyle({ strokeWidth: Number(v) });
+      else if (k === "bend") editor.setEdgeStyle({ bend: v === "straight" ? "straight" : null });
+      else if (k === "del") { editor.deleteSelection(); return; }
+      else if (k === "label") { const t = prompt("连线文字（留空移除）", e.label || ""); editor.setEdgeStyle({ label: t && t.trim() ? t.trim() : null }); }
+      else editor.setEdgeStyle({ [k]: v });
+      refreshWbStylePanel();
+    });
+  });
+}
 function refreshWbStylePanel() {
   const panel = document.getElementById("wbStylePanel");
   if (!panel || !editor) { if (panel) panel.hidden = true; return; }
+  // 选中连线时优先显示连线样式面板（关联线 / 流程线 / 脑图连线均可调）
+  const eid = editor._selEdgeId && editor._selEdgeId();
+  if (eid) { renderEdgeStylePanel(panel, eid); return; }
   // 脑图模式：选中节点时显示节点样式面板
   if (editor.mode === "mindmap") { renderMmNodePanel(panel); return; }
   if (editor.mode !== "whiteboard") { panel.hidden = true; return; }
@@ -665,7 +707,7 @@ function refreshWbStylePanel() {
       `<button class="gm-ws-seg${p.rounded ? " active" : ""}" data-k="rounded" data-v="true" title="圆角"><svg width="18" height="14"><path d="M3,13 L3,7 Q3,3 7,3 L13,3" fill="none" stroke="#1f2a37" stroke-width="2" stroke-linecap="round"/></svg></button>` +
       `<button class="gm-ws-seg${!p.rounded ? " active" : ""}" data-k="rounded" data-v="false" title="直角"><svg width="18" height="14"><path d="M3,13 L3,3 L13,3" fill="none" stroke="#1f2a37" stroke-width="2" stroke-linecap="round"/></svg></button>` +
     `</div>` +
-    wbOpacityLayerHtml(p);
+    wbOpacityLayerHtml(p) + wbActionsHtml();
   wireWsPanelEvents(panel);
 }
 
@@ -679,6 +721,17 @@ function wbOpacityLayerHtml(p) {
       `<button class="gm-ws-seg" data-layer="forward" title="上移一层"><svg width="16" height="16"><path d="M4,10 L8,5 L12,10" fill="none" stroke="#1f2a37" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="12" width="8" height="2.5" rx="1" fill="#1f2a37"/></svg></button>` +
       `<button class="gm-ws-seg" data-layer="backward" title="下移一层"><svg width="16" height="16"><path d="M4,6 L8,11 L12,6" fill="none" stroke="#1f2a37" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="1.5" width="8" height="2.5" rx="1" fill="#1f2a37"/></svg></button>` +
       `<button class="gm-ws-seg" data-layer="back" title="置于底层"><svg width="16" height="16"><rect x="4" y="2" width="8" height="6" rx="1.5" fill="none" stroke="#1f2a37" stroke-width="1.6"/><path d="M8,15 L5,11 L11,11 Z" fill="#1f2a37"/></svg></button>` +
+    `</div>`;
+}
+
+// 白板属性面板操作区：复制 / 删除 / 组合（对应快捷键）
+function wbActionsHtml() {
+  return `<div class="gm-ws-t">操作</div>` +
+    `<div class="gm-ws-row seg">` +
+      `<button class="gm-ws-seg" data-wact="dup" title="创建副本 (Ctrl+D)"><svg width="16" height="16"><rect x="3" y="3" width="8" height="8" rx="1.5" fill="none" stroke="#1f2a37" stroke-width="1.6"/><path d="M5,11 L11,11 L11,5" fill="none" stroke="#1f2a37" stroke-width="1.6"/></svg></button>` +
+      `<button class="gm-ws-seg" data-wact="del" title="删除 (Del)"><svg width="16" height="16"><path d="M4,5 L6,5 L7,3 L9,3 L10,5 L12,5 L12,7 L4,7 Z" fill="none" stroke="#1f2a37" stroke-width="1.6"/><line x1="5" y1="9" x2="11" y2="9" stroke="#1f2a37" stroke-width="1.6"/></svg></button>` +
+      `<button class="gm-ws-seg" data-wact="group" title="组合 (Ctrl+G)"><svg width="16" height="16"><rect x="3" y="3" width="5" height="5" rx="1" fill="none" stroke="#1f2a37" stroke-width="1.6"/><rect x="8" y="8" width="5" height="5" rx="1" fill="none" stroke="#1f2a37" stroke-width="1.6"/></svg></button>` +
+      `<button class="gm-ws-seg" data-wact="ungroup" title="解组 (Ctrl+Shift+G)"><svg width="16" height="16"><path d="M4,4 L8,8 M12,4 L8,8 M4,12 L8,8 M12,12 L8,8" stroke="#1f2a37" stroke-width="1.6"/></svg></button>` +
     `</div>`;
 }
 
@@ -696,6 +749,14 @@ function wireWsPanelEvents(panel) {
   });
   panel.querySelectorAll("[data-layer]").forEach((b) => {
     b.addEventListener("click", () => { editor._reorderLayer(b.dataset.layer); refreshWbStylePanel(); });
+  });
+  panel.querySelectorAll("[data-wact]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const a = b.dataset.wact;
+      if (a === "dup") editor.duplicateSelection();
+      else if (a === "del") editor.deleteSelection();
+      else if (a === "group" || a === "ungroup") toggleGroupSelection();
+    });
   });
   const range = panel.querySelector(".gm-ws-range");
   if (range) {
@@ -736,78 +797,328 @@ function renderWbTextPanel(panel) {
   wireWsPanelEvents(panel);
 }
 
-// ---------- 白板右键菜单 ----------
-let wbClipboard = [];   // 白板内部剪贴板（节点深拷贝）
-let wbMenuPos = null;   // 最近一次右键位置（屏幕坐标），粘贴到鼠标处用
+// ---------- 右键菜单（白板 / 流程图 / 思维导图通用） ----------
+let wbClipboard = [];        // 内部剪贴板（节点深拷贝，三模式通用）
+let wbClipboardEdges = [];   // 剪贴板内连线（副本间连线随复制）
+let wbMenuPos = null;        // 最近一次右键位置（屏幕坐标），粘贴到鼠标处用
+let wbStyleClipboard = null; // 拷贝的节点样式
 
-function wireWbContextMenu() {
+// 通用菜单构建：itemsFn 返回菜单项（keep 项执行后重开菜单以刷新勾选态）
+function showCtxMenu(x, y, itemsFn) {
+  hideCtxMenu();
+  const menu = document.createElement("div");
+  menu.className = "gm-ctx-menu";
+  for (const it of itemsFn()) {
+    if (it.sep) { const s = document.createElement("div"); s.className = "gm-ctx-sep"; menu.appendChild(s); continue; }
+    const b = document.createElement("button");
+    if (it.danger) b.classList.add("danger");
+    b.innerHTML = `<span class="lbl">${it.label}</span>` +
+      (it.kbd ? `<span class="kbd">${it.kbd}</span>` : "") +
+      (it.sub ? `<span class="arr">›</span>` : "");
+    if (it.sub) {
+      b.addEventListener("mouseenter", () => {
+        menu.querySelectorAll(".gm-ctx-sub").forEach((s) => s.remove());
+        const sub = document.createElement("div");
+        sub.className = "gm-ctx-menu gm-ctx-sub";
+        for (const sit of it.sub) {
+          const sb = document.createElement("button");
+          sb.innerHTML = `<span class="lbl">${sit.label}</span>${sit.kbd ? `<span class="kbd">${sit.kbd}</span>` : ""}`;
+          sb.addEventListener("click", () => { hideCtxMenu(); sit.act(); });
+          sub.appendChild(sb);
+        }
+        menu.appendChild(sub);
+        sub.style.position = "fixed";
+        const br = b.getBoundingClientRect();
+        const sr = sub.getBoundingClientRect();
+        sub.style.left = Math.max(6, Math.min(br.right - 4, window.innerWidth - sr.width - 8)) + "px";
+        sub.style.top = Math.max(6, Math.min(br.top - 4, window.innerHeight - sr.height - 8)) + "px";
+      });
+    } else {
+      b.addEventListener("click", () => {
+        it.act();
+        if (it.keep) showCtxMenu(x, y, itemsFn); else hideCtxMenu();
+      });
+    }
+    menu.appendChild(b);
+  }
+  document.body.appendChild(menu);
+  const r = menu.getBoundingClientRect();
+  menu.style.left = Math.max(6, Math.min(x, window.innerWidth - r.width - 8)) + "px";
+  menu.style.top = Math.max(6, Math.min(y, window.innerHeight - r.height - 8)) + "px";
+}
+function hideCtxMenu() {
+  document.querySelectorAll(".gm-ctx-menu").forEach((m) => m.remove());
+}
+const hideWbMenu = hideCtxMenu; // 兼容旧引用
+
+function wireContextMenus() {
   editor.container.addEventListener("contextmenu", (e) => {
-    if (editor.mode !== "whiteboard") return;
     e.preventDefault();
-    wbMenuPos = { x: e.clientX, y: e.clientY };
-    // 右键命中节点：纳入选中（不在多选内则单选）
+    if (editor.rmbJustDragged && editor.rmbJustDragged()) return; // 右键拖拽平移过画布，不弹菜单
+    // 右键命中：连线 / 节点 纳入选中，空白则清空
+    const edgeHit = e.target.closest && e.target.closest("[data-edge]");
     const hit = e.target.closest && e.target.closest("[data-id]");
-    if (hit) {
+    if (edgeHit && editor.mode !== "whiteboard") {
+      const key = "e:" + edgeHit.getAttribute("data-edge");
+      if (!editor.selection.has(key)) editor.selection = new Set([key]);
+      editor.render();
+    } else if (hit) {
       const id = hit.getAttribute("data-id");
       if (!editor.selection.has(id)) editor.selection = new Set([id]);
       editor.render();
     } else {
       editor.clearSelection();
     }
-    showWbMenu(e.clientX, e.clientY);
+    if (editor.mode === "whiteboard") showWbMenu(e.clientX, e.clientY);
+    else if (editor.mode === "flowchart") showFcMenu(e.clientX, e.clientY);
+    else showMmMenu(e.clientX, e.clientY);
   });
-  // 点击其他区域 / 滚动 / 失焦关闭
-  window.addEventListener("pointerdown", (e) => { if (!e.target.closest || !e.target.closest(".gm-ctx-menu")) hideWbMenu(); }, true);
-  window.addEventListener("wheel", hideWbMenu, { passive: true });
-  window.addEventListener("blur", hideWbMenu);
-  window.addEventListener("keydown", (e) => { if (e.key === "Escape") hideWbMenu(); });
+  // 点击其他区域 / 滚动 / 失焦 / Esc 关闭
+  window.addEventListener("pointerdown", (e) => { if (!e.target.closest || !e.target.closest(".gm-ctx-menu")) hideCtxMenu(); }, true);
+  window.addEventListener("wheel", hideCtxMenu, { passive: true });
+  window.addEventListener("blur", hideCtxMenu);
+  window.addEventListener("keydown", (e) => { if (e.key === "Escape") hideCtxMenu(); });
 }
-function hideWbMenu() {
-  const m = document.querySelector(".gm-ctx-menu");
-  if (m) m.remove();
-}
+
+// ---------- 白板右键菜单 ----------
 function showWbMenu(x, y) {
-  hideWbMenu();
-  const hasSel = editor.selection.size > 0;
-  const items = [];
-  if (wbClipboard.length) items.push({ label: "粘贴", kbd: "Ctrl+V", act: () => pasteWbClipboard() });
-  if (hasSel) items.push({ label: "复制", kbd: "Ctrl+C", act: copyWbSelection });
-  items.push({ label: "复制为 PNG 到剪贴板", kbd: "Shift+Alt+C", act: () => copyWbExport(true) });
-  items.push({ label: "复制为 SVG 到剪贴板", act: () => copyWbExport(false) });
-  items.push({ sep: true });
-  items.push({ label: "全部选中", kbd: "Ctrl+A", keep: true, act: wbSelectAll });
-  items.push({ label: (editor.showGrid ? "✓ " : "") + "显示网格", kbd: "Ctrl+'", keep: true, act: () => editor.toggleGrid() });
-  if (hasSel) {
+  wbMenuPos = { x, y };
+  showCtxMenu(x, y, () => {
+    const hasSel = editor.selection.size > 0;
+    const single = hasSel && editor.selection.size === 1 ? editor.nodeById([...editor.selection][0]) : null;
+    const items = [];
+    if (hasSel) items.push({ label: "剪切", kbd: "Ctrl+X", act: cutWbSelection });
+    if (wbClipboard.length) items.push({ label: "粘贴", kbd: "Ctrl+V", act: () => pasteWbClipboard() });
+    if (hasSel) items.push({ label: "复制", kbd: "Ctrl+C", act: copyWbSelection });
     items.push({ sep: true });
-    items.push({ label: "置于顶层", act: () => editor._reorderLayer("front") });
-    items.push({ label: "置于底层", act: () => editor._reorderLayer("back") });
-    items.push({ label: "删除", kbd: "Del", act: () => editor.deleteSelection() });
-  }
-  items.push({ sep: true });
-  items.push({ label: "详细统计信息", kbd: "Alt+/", act: wbStats });
-  const menu = document.createElement("div");
-  menu.className = "gm-ctx-menu";
-  for (const it of items) {
-    if (it.sep) { const s = document.createElement("div"); s.className = "gm-ctx-sep"; menu.appendChild(s); continue; }
-    const b = document.createElement("button");
-    b.innerHTML = `<span class="lbl">${it.label}</span>${it.kbd ? `<span class="kbd">${it.kbd}</span>` : ""}`;
-    b.addEventListener("click", () => { it.act(); if (it.keep) showWbMenu(x, y); else hideWbMenu(); });
-    menu.appendChild(b);
-  }
-  document.body.appendChild(menu);
-  // 视口边界修正
-  const r = menu.getBoundingClientRect();
-  menu.style.left = Math.max(6, Math.min(x, window.innerWidth - r.width - 8)) + "px";
-  menu.style.top = Math.max(6, Math.min(y, window.innerHeight - r.height - 8)) + "px";
+    items.push({ label: "复制为 PNG 到剪贴板", kbd: "Shift+Alt+C", act: () => copyWbExport(true) });
+    items.push({ label: "复制为 SVG 到剪贴板", act: () => copyWbExport(false) });
+    if (hasSel) items.push({ label: "复制文本到剪贴板", act: copySelText });
+    if (single) items.push({ label: "拷贝样式", kbd: "Ctrl+Shift+C", act: copyNodeStyle });
+    if (hasSel && wbStyleClipboard) items.push({ label: "粘贴样式", kbd: "Ctrl+Shift+V", act: pasteNodeStyle });
+    if (single) items.push({ label: "编辑", kbd: "Enter", act: () => editor.beginTextEdit(single.id) });
+    if (hasSel) items.push({ label: single && single.locked ? "取消锁定" : "锁定", kbd: "Ctrl+Shift+L", act: toggleLockSelection });
+    items.push({ label: (editor.showGrid ? "✓ " : "") + "显示网格", kbd: "Ctrl+'", keep: true, act: () => editor.toggleGrid() });
+    if (hasSel) {
+      items.push({ sep: true });
+      items.push({ label: "下一层", kbd: "Ctrl+[", act: () => editor._reorderLayer("backward") });
+      items.push({ label: "上一层", kbd: "Ctrl+]", act: () => editor._reorderLayer("forward") });
+      items.push({ label: "置于顶层", kbd: "Ctrl+Shift+]", act: () => editor._reorderLayer("front") });
+      items.push({ label: "置于底层", kbd: "Ctrl+Shift+[", act: () => editor._reorderLayer("back") });
+      items.push({ sep: true });
+      items.push({ label: "水平翻转", kbd: "Shift+H", act: () => flipSelection("x") });
+      items.push({ label: "垂直翻转", kbd: "Shift+V", act: () => flipSelection("y") });
+      items.push({ label: "创建副本", kbd: "Ctrl+D", act: () => editor.duplicateSelection() });
+    }
+    items.push({ sep: true });
+    items.push({ label: "全部锁定", keep: true, act: () => setAllLocked(true) });
+    items.push({ label: "全部解锁", keep: true, act: () => setAllLocked(false) });
+    if (hasSel) items.push({ sep: true }, { label: "删除", kbd: "Del", danger: true, act: () => editor.deleteSelection() });
+    items.push({ sep: true });
+    items.push({ label: "详细统计信息", kbd: "Alt+/", act: wbStats });
+    if (editor._selEdgeId()) items.push({ label: "编辑连线样式", kbd: "双击连线", act: () => { refreshWbStylePanel(); flashPanel(document.getElementById("wbStylePanel")); } });
+    return items;
+  });
 }
+
+// ---------- 流程图右键菜单 ----------
+function showFcMenu(x, y) {
+  wbMenuPos = { x, y };
+  showCtxMenu(x, y, () => {
+    const items = [];
+    items.push({ label: "撤销", kbd: "Ctrl+Z", act: () => editor.undo() });
+    if (wbClipboard.length) items.push({ label: "在此粘贴", kbd: "Ctrl+V", act: () => pasteWbClipboard() });
+    items.push({ sep: true });
+    items.push({ label: "复制为图像", kbd: "Shift+Alt+C", act: () => copyWbExport(true) });
+    items.push({ label: "复制为 SVG", act: () => copyWbExport(false) });
+    items.push({ label: "清除默认风格", act: clearFcStyle });
+    items.push({ sep: true });
+    items.push({ label: "全选", kbd: "Ctrl+A", keep: true, act: wbSelectAll });
+    items.push({ label: "选择顶点", keep: true, act: () => {
+      editor.selection = new Set(editor.doc.nodes.filter((n) => !n.locked).map((n) => n.id));
+      editor.render();
+    } });
+    items.push({ label: "选择边线", keep: true, act: () => {
+      editor.selection = new Set(editor.doc.edges.map((e) => "e:" + e.id));
+      editor.render();
+    } });
+    if (editor._selEdgeId()) items.push({ label: "编辑连线样式", kbd: "双击连线", act: () => { refreshWbStylePanel(); flashPanel(document.getElementById("wbStylePanel")); } });
+    return items;
+  });
+}
+
+// ---------- 思维导图右键菜单 ----------
+function showMmMenu(x, y) {
+  showCtxMenu(x, y, () => {
+    const items = [];
+    items.push({ label: "回到根节点", kbd: "Ctrl+Enter", act: mmFocusRoot });
+    items.push({ sep: true });
+    items.push({ label: "展开所有", act: () => mmSetAllCollapsed(false) });
+    items.push({ label: "收起所有", act: () => mmSetAllCollapsed(true) });
+    items.push({ label: "展开到", sub: [1, 2, 3, 4, 5].map((d) => ({ label: `${d} 级主题`, act: () => mmCollapseToDepth(d) })) });
+    items.push({ sep: true });
+    items.push({ label: "一键整理布局", kbd: "Ctrl+L", act: mmRelayout });
+    items.push({ label: "适应画布", kbd: "Ctrl+I", act: () => editor.fitView() });
+    items.push({ label: "禅模式", act: toggleZen });
+    items.push({ sep: true });
+    items.push({ label: "一键去除所有节点自定义样式", act: resetMmStyles });
+    items.push({ label: "复制到剪贴板", sub: [
+      { label: "复制为 PNG", act: () => copyWbExport(true) },
+      { label: "复制为 SVG", act: () => copyWbExport(false) },
+      { label: "复制为 JSON", act: copyDocJSON },
+    ] });
+    if (editor._selEdgeId()) items.push({ label: "编辑连线样式", kbd: "双击连线", act: () => { refreshWbStylePanel(); flashPanel(document.getElementById("wbStylePanel")); } });
+    return items;
+  });
+}
+
+// ---------- 脑图菜单辅助 ----------
+function mmNodeDepth(n) {
+  let d = 1, p = n;
+  while (p && p.parentId != null) { p = editor.nodeById(p.parentId); d++; }
+  return d;
+}
+function mmHasKids(n) { return editor.doc.nodes.some((c) => c.parentId === n.id); }
+function mmSetAllCollapsed(collapsed) {
+  for (const n of editor.doc.nodes) if (mmHasKids(n)) n.collapsed = collapsed;
+  layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); editor.pushHistory();
+}
+function mmCollapseToDepth(depth) {
+  for (const n of editor.doc.nodes) if (mmHasKids(n)) n.collapsed = mmNodeDepth(n) >= depth;
+  layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); editor.pushHistory();
+  toast(`已展开到 ${depth} 级主题`, "info");
+}
+function mmFocusRoot() {
+  const root = editor.doc.nodes.find((n) => n.parentId == null);
+  if (!root) return;
+  const s = editor.sizes.get(root.id) || { w: 160, h: 56 };
+  const r = editor.rect();
+  editor.view.x = r.width / 2 - (root.x + s.w / 2) * editor.view.scale;
+  editor.view.y = r.height / 2 - (root.y + s.h / 2) * editor.view.scale;
+  editor.render();
+}
+function mmRelayout() {
+  layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); editor.pushHistory();
+}
+function toggleZen() {
+  const on = document.body.classList.toggle("gm-zen");
+  toast(on ? "禅模式：按 Esc 退出" : "已退出禅模式", "info");
+}
+function resetMmStyles() {
+  for (const n of editor.doc.nodes) {
+    delete n.bold; delete n.italic; delete n.underline;
+    delete n.strokeWidth; delete n.strokeStyle; delete n.roughness; delete n.opacity;
+    n.shape = "rounded";
+    if (n.parentId == null) { n.fontSize = 17; }
+    else {
+      n.fontSize = 15; n.color = "#fff"; n.textColor = "#1f2a37";
+      let p = editor.nodeById(n.parentId);
+      while (p && p.parentId != null) p = editor.nodeById(p.parentId);
+      if (p && p.color) n.stroke = p.color;
+    }
+  }
+  layoutMindmap(editor.doc); editor.render(); editor.onChange(); editor.pushHistory();
+  toast("已去除所有节点自定义样式", "success");
+}
+function copyDocJSON() {
+  navigator.clipboard.writeText(JSON.stringify(editor.doc, null, 2))
+    .then(() => toast("已复制文档 JSON 到剪贴板", "info"))
+    .catch(() => toast("复制失败", "error"));
+}
+
+// ---------- 流程图菜单辅助 ----------
+function clearFcStyle() {
+  const sel = new Set([...editor.selection].filter((k) => !(k.startsWith && k.startsWith("e:"))));
+  const targets = sel.size ? editor.doc.nodes.filter((n) => sel.has(n.id)) : editor.doc.nodes;
+  for (const n of targets) {
+    delete n.roughness; delete n.strokeStyle; delete n.opacity; delete n.strokeWidth;
+    delete n.bold; delete n.italic; delete n.underline;
+    if (n.shape === "text") { n.color = "transparent"; n.stroke = "transparent"; }
+    else { n.color = "#fff"; n.stroke = "#2f80ed"; }
+    n.fontSize = 14;
+  }
+  editor.render(); editor.onChange(); editor.pushHistory();
+  toast(sel.size ? "已清除选中节点的自定义风格" : "已清除默认风格", "info");
+}
+
+// ---------- 通用操作辅助（复制 / 样式 / 组合 / 锁定 / 翻转） ----------
+function copyNodeStyle() {
+  const n = editor.nodeById([...editor.selection][0]);
+  if (!n) return;
+  const KEYS = ["stroke", "color", "textColor", "strokeWidth", "strokeStyle", "roughness", "rounded", "opacity", "fontSize", "fontStyle", "fontFamily", "textAlign", "bold", "italic", "underline"];
+  wbStyleClipboard = {};
+  for (const k of KEYS) if (n[k] !== undefined && n[k] !== null) wbStyleClipboard[k] = n[k];
+  toast("已拷贝样式，选中其他图形后可粘贴", "info");
+}
+function pasteNodeStyle() {
+  if (!wbStyleClipboard) return;
+  const sel = [...editor.selection].filter((k) => !(k.startsWith && k.startsWith("e:")));
+  for (const id of sel) {
+    const n = editor.nodeById(id);
+    if (!n || ["frame", "embed", "image"].includes(n.shape)) continue;
+    Object.assign(n, JSON.parse(JSON.stringify(wbStyleClipboard)));
+  }
+  editor.render(); editor.onChange(); editor.pushHistory();
+  toast("已粘贴样式", "info");
+}
+function toggleGroupSelection() {
+  const sel = [...editor.selection].map((id) => editor.nodeById(id)).filter(Boolean);
+  if (sel.length < 2) { toast("请先选中多个图形（Shift + 点选）", "info"); return; }
+  if (sel.every((n) => n.group)) {
+    for (const n of sel) delete n.group;
+    toast("已取消组合", "info");
+  } else {
+    const gid = newId();
+    for (const n of sel) n.group = gid;
+    toast(`已组合 ${sel.length} 个图形，拖动任一成员整组联动`, "info");
+  }
+  editor.render(); editor.onChange(); editor.pushHistory();
+}
+function toggleLockSelection() {
+  const sel = [...editor.selection].map((id) => editor.nodeById(id)).filter(Boolean);
+  if (!sel.length) return;
+  const lock = !sel.every((n) => n.locked);
+  for (const n of sel) n.locked = lock;
+  editor.render(); editor.onChange(); editor.pushHistory();
+  toast(lock ? "已锁定选中图形" : "已解锁选中图形", "info");
+}
+function setAllLocked(v) {
+  for (const n of editor.doc.nodes) n.locked = v;
+  editor.render(); editor.onChange(); editor.pushHistory();
+  toast(v ? "已锁定全部图形" : "已解锁全部图形", "info");
+}
+function flipSelection(axis) {
+  const key = axis === "x" ? "flipX" : "flipY";
+  let flipped = 0;
+  for (const id of editor.selection) {
+    const n = editor.nodeById(id);
+    if (!n || n.shape === "text" || n.shape === "embed") continue;
+    n[key] = !n[key];
+    flipped++;
+  }
+  if (flipped) { editor.render(); editor.onChange(); editor.pushHistory(); }
+}
+function copySelText() {
+  const texts = [...editor.selection].map((id) => editor.nodeById(id)).filter(Boolean).map((n) => n.text || "").filter(Boolean);
+  if (!texts.length) { toast("选中元素没有文本", "info"); return; }
+  navigator.clipboard.writeText(texts.join("\n"))
+    .then(() => toast("文本已复制到剪贴板", "info"))
+    .catch(() => {});
+}
+function cutWbSelection() { copyWbSelection(); editor.deleteSelection(); }
 function wbSelectAll() {
-  editor.selection = new Set(editor.doc.nodes.map((n) => n.id));
+  const hidden = editor.hiddenNodes ? editor.hiddenNodes() : new Set();
+  editor.selection = new Set(editor.doc.nodes.filter((n) => !n.locked && !hidden.has(n.id)).map((n) => n.id));
   editor.render();
 }
 function copyWbSelection() {
   const sel = new Set(editor.selection);
   wbClipboard = editor.doc.nodes.filter((n) => sel.has(n.id)).map((n) => JSON.parse(JSON.stringify(n)));
-  if (wbClipboard.length) toast(`已复制 ${wbClipboard.length} 个图形`, "info");
+  const ids = new Set(wbClipboard.map((n) => n.id));
+  wbClipboardEdges = editor.doc.edges
+    .filter((e) => ids.has(e.from) && ids.has(e.to))
+    .map((e) => JSON.parse(JSON.stringify(e)));
+  if (wbClipboard.length) toast(`已复制 ${wbClipboard.length} 个元素`, "info");
 }
 function pasteWbClipboard() {
   if (!wbClipboard.length) return;
@@ -815,17 +1126,23 @@ function pasteWbClipboard() {
   let minX = Infinity, minY = Infinity;
   for (const n of wbClipboard) { minX = Math.min(minX, n.x); minY = Math.min(minY, n.y); }
   const world = wbMenuPos ? editor.toWorld(wbMenuPos.x, wbMenuPos.y) : null;
+  const idMap = new Map();
   const pasted = wbClipboard.map((n) => {
     const c = JSON.parse(JSON.stringify(n));
-    c.id = crypto.randomUUID ? crypto.randomUUID() : "n" + Math.random().toString(36).slice(2);
+    idMap.set(c.id, newId());
+    c.id = idMap.get(c.id);
     c.x = world ? world.x + (n.x - minX) : n.x + 24;
     c.y = world ? world.y + (n.y - minY) : n.y + 24;
     return c;
   });
+  const pastedEdges = wbClipboardEdges
+    .map((e) => ({ ...JSON.parse(JSON.stringify(e)), id: newId(), from: idMap.get(e.from), to: idMap.get(e.to) }))
+    .filter((e) => e.from && e.to);
   editor.doc.nodes.push(...pasted);
+  editor.doc.edges.push(...pastedEdges);
   editor.selection = new Set(pasted.map((n) => n.id));
   editor.render(); editor.onChange(); editor.pushHistory();
-  toast(`已粘贴 ${pasted.length} 个图形`, "info");
+  toast(`已粘贴 ${pasted.length} 个元素`, "info");
 }
 // 导出当前选择（无选择则导出整块画布）为 SVG 字符串
 function wbExportSVG() {
@@ -1187,6 +1504,13 @@ function wireKeys() {
       const act = fcKeys[e.key.toLowerCase()];
       if (act) { e.preventDefault(); onFcAction(act); return; }
     }
+    // 通用快捷键（所有模式）：创建副本 / 锁定 / 全选 / 复制
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") { e.preventDefault(); editor.duplicateSelection(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "l") { e.preventDefault(); toggleLockSelection(); return; }
+    if (editor.mode !== "whiteboard") {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") { e.preventDefault(); editor.selection = new Set(editor.doc.nodes.filter((n) => !n.locked).map((n) => n.id)); editor.render(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") { e.preventDefault(); editor.duplicateSelection(); return; }
+    }
     // 白板工具快捷键（1/V 选择 · H 抓手 · F 画框 · 2-0 图形 · K 激光笔）
     if (editor.mode === "whiteboard") {
       const wbKeys = { v: "select", "1": "select", h: "hand", f: "frame", "2": "rect", "3": "diamond", "4": "ellipse", "5": "arrow", "6": "line", "7": "pen", "8": "text", "9": "image", "0": "eraser", k: "laser" };
@@ -1199,6 +1523,15 @@ function wireKeys() {
       if ((e.ctrlKey || e.metaKey) && e.key === "'") { e.preventDefault(); editor.toggleGrid(); return; }
       if (e.shiftKey && e.altKey && e.key.toLowerCase() === "c") { e.preventDefault(); copyWbExport(true); return; }
       if (e.altKey && e.key === "/") { e.preventDefault(); wbStats(); return; }
+      // 白板：组合 / 解组 / 翻转 / 图层层级
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "g") { e.preventDefault(); toggleGroupSelection(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "g") { e.preventDefault(); toggleGroupSelection(); return; }
+      if (e.shiftKey && e.key.toLowerCase() === "h") { e.preventDefault(); flipSelection("x"); return; }
+      if (e.shiftKey && e.key.toLowerCase() === "v") { e.preventDefault(); flipSelection("y"); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key === "[") { e.preventDefault(); editor._reorderLayer("backward"); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key === "]") { e.preventDefault(); editor._reorderLayer("forward"); return; }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "]") { e.preventDefault(); editor._reorderLayer("front"); return; }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "[") { e.preventDefault(); editor._reorderLayer("back"); return; }
     }
     if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); editor.deleteSelection(); return; }
     if (e.key === "Escape") editor.clearSelection();
@@ -1224,7 +1557,7 @@ function wireKeys() {
 
   editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), mode: map.type || "mindmap", onNoteBadge: (id) => { const n = editor.nodeById(id); if (n) openNoteModal(n); } });
   window.__gmEditor = editor; // 测试钩子：headless 验证用
-  wireWbContextMenu();
+  wireContextMenus();
   editor.load(map.data);
   dirty = false; // 初始加载触发的 onChange 不算脏，避免无谓落盘
   lastSavedAt = map.updated_at || Date.now();

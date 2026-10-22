@@ -15,7 +15,17 @@ export function layoutMindmap(doc, layout) {
 
   const childrenMap = new Map();
   const roots = [];
+  // 折叠感知：被折叠节点的整个子树视为隐藏，布局时按叶子处理
+  const hidden = new Set();
+  const kidsAll = new Map();
+  for (const n of nodes) if (n.parentId != null) { if (!kidsAll.has(n.parentId)) kidsAll.set(n.parentId, []); kidsAll.get(n.parentId).push(n); }
+  const stack = nodes.filter((n) => n.collapsed && (kidsAll.get(n.id) || []).length).map((n) => n.id);
+  while (stack.length) {
+    const id = stack.pop();
+    for (const c of kidsAll.get(id) || []) if (!hidden.has(c.id)) { hidden.add(c.id); stack.push(c.id); }
+  }
   for (const n of nodes) {
+    if (hidden.has(n.id)) continue;
     if (n.parentId == null) roots.push(n);
     else { if (!childrenMap.has(n.parentId)) childrenMap.set(n.parentId, []); childrenMap.get(n.parentId).push(n); }
   }

@@ -57,4 +57,12 @@ export const ICONS = {
   summary: S(`<path d="M10 4c-2.6 0-2.6 3.2-2.6 5.2 0 1.6-1 2.4-2.4 2.8 1.4.4 2.4 1.2 2.4 2.8 0 2 0 5.2 2.6 5.2"/>`),
   sliders: S(`<path d="M4 8h10M18 8h2M4 16h4M12 16h8"/><circle cx="16" cy="8" r="2.2"/><circle cx="10" cy="16" r="2.2"/>`),
   gear: S(`<circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1"/>`),
+  // ---- 右键菜单 / 操作区 ----
+  copy: S(`<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>`),
+  group: S(`<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/>`),
+  ungroup: S(`<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5" stroke-dasharray="3 2.5"/><path d="M17.5 3v7M14 6.5h7" opacity=".4"/>`),
+  lock: S(`<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>`),
+  unlock: S(`<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.8-1.3"/>`),
+  flipH: S(`<path d="M12 3v18" stroke-dasharray="3 2.5"/><path d="M8 7L3 12l5 5zM16 7l5 5-5 5z"/>`),
+  flipV: S(`<path d="M3 12h18" stroke-dasharray="3 2.5"/><path d="M7 8l5-5 5 5zM7 16l5 5 5-5z"/>`),
 };

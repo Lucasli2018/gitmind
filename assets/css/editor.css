@@ -121,6 +121,7 @@ body.gm-wb-mode #themePanel,
 body.gm-wb-mode #layoutPanel { display: none; }                /* 脑图专属面板隐藏 */
 body.gm-wb-mode #layoutBtn,
 body.gm-wb-mode #outlineBtn { display: none; }
+body.gm-wb-mode .gm-right { display: none; }                  /* 右侧设置面板仅在思维导图展示 */
 
 /* 浮动工具栏（画布顶部居中） */
 .gm-wb-bar {
@@ -434,3 +435,9 @@ body.gm-side-hidden .gm-right { display: none; }
   .gm-side-rail { display: none; }
   .gm-set-panel { display: none; }
 }
+
+/* ---------- 禅模式：隐藏顶栏 / 侧栏 / 右面板，沉浸编辑 ---------- */
+body.gm-zen .gm-topbar { display: none !important; }
+body.gm-zen .gm-side-rail { display: none !important; }
+body.gm-zen .gm-side-toggle { display: none !important; }
+body.gm-zen .gm-right { display: none !important; }

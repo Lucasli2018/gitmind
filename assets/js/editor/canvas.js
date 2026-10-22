@@ -18,6 +18,10 @@ export class Editor {
     this.sizes = new Map();
     this._drag = null; this._pan = null; this._connect = null; this._stroke = null;
     this._pinch = null;
+    this._rmb = null; this._rmbDraggedAt = 0;   // 右键拖拽平移画布（长按右键拖动）
+    this._edgeDrag = null;                       // 连线中点手柄拖拽（调节弯曲）
+    this._pendingCollapse = null;                // 脑图折叠徽标（pointerup 时切换）
+    this._connectHover = null;                   // 连线拖拽中的吸附高亮
     // 白板扩展状态：图形拖拽创建 / 橡皮 / 激光笔 / 当前描边色
     this.toolColor = "#1f2a37";
     // 白板图形默认属性（属性面板数据源）：描边/背景/宽度/边框样式/线条风格/边角/透明度
@@ -209,16 +213,20 @@ export class Editor {
       }
     }
     // 边（脑图模式按 parentId 派生连线，保证父子之间始终有线）
+    const hidden = this.hiddenNodes();
     let edges = this.doc.edges;
     if (this.doc.type === "mindmap") {
       edges = [];
       for (const n of this.doc.nodes) {
-        if (n.parentId && this.nodeById(n.parentId)) edges.push({ id: "p-" + n.id, from: n.parentId, to: n.id });
+        if (n.parentId && this.nodeById(n.parentId)) edges.push({ id: "p-" + n.id, from: n.parentId, to: n.id, derived: true });
       }
       // 关联线（工具栏创建的任意两节点连线）附加在父子连线之上
       edges = edges.concat(this.doc.edges.filter((e) => e.assoc));
     }
-    for (const e of edges) html += this.edgeHTML(e);
+    for (const e of edges) {
+      if (hidden.has(e.from) || hidden.has(e.to)) continue;
+      html += this.edgeHTML(e);
+    }
     // 自由画笔
     for (const s of this.doc.strokes) html += this.strokeHTML(s);
     if (this._stroke) html += this.strokeHTML(this._stroke);
@@ -227,9 +235,11 @@ export class Editor {
     // 白板：框选矩形
     if (this._marquee) html += this.marqueeHTML();
     // 节点
-    for (const n of this.doc.nodes) html += this.nodeHTML(n, this.selection.has(n.id));
+    for (const n of this.doc.nodes) { if (!hidden.has(n.id)) html += this.nodeHTML(n, this.selection.has(n.id)); }
     // 临时连线
     if (this._connect) html += this.tempConnectHTML();
+    // 选中连线的中点手柄（拖动调节弯曲）
+    if (this._selEdgeId() && !this._forExport) html += this.edgeHandleHTML();
     // 白板：激光笔轨迹（最上层，不持久化）
     if (this._laser && this._laser.pts.length > 1) html += this.laserHTML();
 
@@ -367,7 +377,14 @@ export class Editor {
   nodeHTML(n, selected) {
     const s = this.sizes.get(n.id) || sizeOf(n, this.doc.type);
     const { w, h, lines } = s;
-    let inner = this.shapeHTML(n, s);
+    let shape = this.shapeHTML(n, s);
+    // 白板：水平/垂直翻转（只翻图形不翻文字；embed 网页除外）
+    if ((n.flipX || n.flipY) && n.shape !== "embed" && n.shape !== "text") {
+      const tx = n.flipX ? `translate(${w},0) scale(-1,1)` : "";
+      const ty = n.flipY ? `translate(0,${h}) scale(1,-1)` : "";
+      shape = `<g transform="${tx} ${ty}">${shape}</g>`;
+    }
+    let inner = shape;
     // 文本（箭头/直线/图片/嵌入网页/画框标签已自绘，跳过居中文本）
     const TEXTLESS = ["arrow", "line", "image", "embed", "frame"];
     if (!TEXTLESS.includes(n.shape)) {
@@ -410,6 +427,21 @@ export class Editor {
         inner += `<a href="${escapeXml(n.href)}" target="_blank" rel="noopener"><g transform="translate(${bx},-6)"><title>${escapeXml(n.href)}</title><circle r="8" fill="#2f80ed" stroke="#fff" stroke-width="1.5"/><text y="3.5" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">链</text></g></a>`;
       }
     }
+    // 白板：锁定节点徽标（灰色小锁，锁定后不可选中/拖动/删除）
+    if (this.doc.type === "whiteboard" && n.locked && !this._forExport) {
+      inner += `<g transform="translate(${w - 6},-6)"><circle r="8" fill="#94a3b8" stroke="#fff" stroke-width="1.5"/><text y="3.5" text-anchor="middle" font-size="9">🔒</text></g>`;
+    }
+    // 脑图：折叠 / 展开徽标（点击切换子树显隐）
+    if (this.doc.type === "mindmap" && !this._forExport) {
+      const hasKids = this.doc.nodes.some((c) => c.parentId === n.id);
+      if (hasKids) {
+        const side = n.side === "left" ? "left" : n.side === "down" ? "down" : "right";
+        const bx = side === "left" ? -14 : side === "down" ? w / 2 : w + 14;
+        const by = side === "down" ? h + 14 : h / 2;
+        const col = n.stroke || "#94a3b8";
+        inner += `<g class="gm-collapse-badge" data-collapse="${n.id}"><circle cx="${bx}" cy="${by}" r="8" fill="#fff" stroke="${col}" stroke-width="1.5"/><text x="${bx}" y="${by + 3.5}" text-anchor="middle" font-size="11" font-weight="700" fill="#4b5563">${n.collapsed ? "+" : "−"}</text></g>`;
+      }
+    }
     // 选中框（直线/箭头 w、h 可能是负增量，选中框按包围盒画）
     if (selected) {
       if (n.shape === "line" || n.shape === "arrow") {
@@ -419,8 +451,8 @@ export class Editor {
         inner += `<rect x="-5" y="-5" width="${w + 10}" height="${h + 10}" rx="14" fill="none" stroke="#11b5a4" stroke-width="2" stroke-dasharray="6 4"/>`;
       }
     }
-    // 关联线工具：悬停吸附的节点高亮（橙色虚线框）
-    if (this.tool === "link" && this._linkHover === n.id && !this._forExport) {
+    // 关联线工具：悬停吸附 / 拖拽中吸附的节点高亮（橙色虚线框）
+    if (this.tool === "link" && (this._linkHover === n.id || this._connectHover === n.id) && !this._forExport) {
       inner += `<rect x="-8" y="-8" width="${w + 16}" height="${h + 16}" rx="16" fill="none" stroke="#ff9f43" stroke-width="2.5" stroke-dasharray="7 5"/>`;
     }
     // 白板：选中元素的自由变换手柄
@@ -451,60 +483,133 @@ export class Editor {
     return `<g class="gm-node${selected ? " sel" : ""}" data-id="${n.id}" transform="translate(${n.x},${n.y})"${op}>${inner}</g>`;
   }
 
+  // 连线端点（世界坐标）：assoc 关联线吸附到两侧节点边框；脑图父子连线按 side 接出；流程图连线走上下端口
+  _edgeEnds(e) {
+    const a = this.nodeById(e.from), b = this.nodeById(e.to);
+    const sa = this.sizes.get(a.id), sb = this.sizes.get(b.id);
+    if (e.assoc) {
+      const acx = a.x + sa.w / 2, acy = a.y + sa.h / 2, bcx = b.x + sb.w / 2, bcy = b.y + sb.h / 2;
+      const pa = this._rectEdgePoint(sa.w, sa.h, acx, acy, bcx, bcy);
+      const pb = this._rectEdgePoint(sb.w, sb.h, bcx, bcy, acx, acy);
+      return { ax: pa.x, ay: pa.y, bx: pb.x, by: pb.y };
+    }
+    if (this.doc.type === "mindmap") {
+      const side = b.side || "right";
+      if (side === "left") return { ax: a.x, ay: a.y + sa.h / 2, bx: b.x + sb.w, by: b.y + sb.h / 2 };
+      if (side === "down") return { ax: a.x + sa.w / 2, ay: a.y + sa.h, bx: b.x + sb.w / 2, by: b.y };
+      return { ax: a.x + sa.w, ay: a.y + sa.h / 2, bx: b.x, by: b.y + sb.h / 2 };
+    }
+    const ax = a.x + sa.w / 2, ay = a.y + sa.h / 2, bx = b.x + sb.w / 2, by = b.y + sb.h / 2;
+    const sBottom = ay < by;
+    return { ax, ay: sBottom ? a.y + sa.h : a.y, bx, by: sBottom ? b.y : b.y + sb.h };
+  }
+
+  // 二次贝塞尔中点 B(0.5) = 0.25·P0 + 0.5·C + 0.25·P1
+  _quadMid(ax, ay, bx, by, bend) {
+    if (bend && (bend.x || bend.y)) return { x: 0.25 * ax + 0.5 * bend.x + 0.25 * bx, y: 0.25 * ay + 0.5 * bend.y + 0.25 * by };
+    return { x: (ax + bx) / 2, y: (ay + by) / 2 };
+  }
+
+  // 选中集中的唯一连线 id（选择集里以 "e:" 前缀标识连线），无则 null
+  _selEdgeId() {
+    for (const k of this.selection) if (k.startsWith && k.startsWith("e:")) return k.slice(2);
+    return null;
+  }
+  edgeById(id) { return this.doc.edges.find((e) => e.id === id); }
+
   edgeHTML(e) {
     const a = this.nodeById(e.from), b = this.nodeById(e.to);
     if (!a || !b) return "";
     const sa = this.sizes.get(a.id), sb = this.sizes.get(b.id);
     if (!sa || !sb) return "";
-    // 关联线：任意两节点间的橙色虚线曲线（端点自动吸附到两侧节点边框）
+    const selKey = "e:" + e.id;
+    const sel = this.selection.has(selKey);
+    const dataEdge = e.derived ? "" : ` data-edge="${e.id}"`;
+    const hitPath = (d) => e.derived ? "" : `<path class="gm-edge" d="${d}" fill="none" stroke="transparent" stroke-width="14" pointer-events="stroke"${dataEdge}/>`;
+    // 连线样式（选中高亮）：颜色 / 宽度 / 线型，均可按连线覆盖
+    const stroke = sel ? "#11b5a4" : (e.stroke || (e.derived ? (b.stroke || "#11b5a4") : e.assoc ? "#ff9f43" : "#94a3b8"));
+    const sw = e.strokeWidth || 2;
+    const style = e.strokeStyle || (e.assoc || e.derived ? (e.assoc ? "dashed" : "solid") : "solid");
+    const dash = style === "dashed" ? ` stroke-dasharray="${(7 + sw * 2).toFixed(1)} ${(5 + sw * 2).toFixed(1)}"`
+      : style === "dotted" ? ` stroke-dasharray="${Math.max(0.1, sw * 0.5).toFixed(2)} ${(sw * 2.2).toFixed(1)}" stroke-linecap="round"` : "";
+    // 关联线：任意两节点间的曲线（端点自动吸附到两侧节点边框），拖中点可调节弯曲
     if (e.assoc) {
-      const acx = a.x + sa.w / 2, acy = a.y + sa.h / 2, bcx = b.x + sb.w / 2, bcy = b.y + sb.h / 2;
-      const pa = this._rectEdgePoint(sa.w, sa.h, acx, acy, bcx, bcy);
-      const pb = this._rectEdgePoint(sb.w, sb.h, bcx, bcy, acx, acy);
-      const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
-      const dx = pb.x - pa.x, dy = pb.y - pa.y, L = Math.hypot(dx, dy) || 1;
-      const bow = Math.min(46, L * 0.18);
-      const d = `M ${pa.x.toFixed(1)},${pa.y.toFixed(1)} Q ${(mx - dy / L * bow).toFixed(1)},${(my + dx / L * bow).toFixed(1)} ${pb.x.toFixed(1)},${pb.y.toFixed(1)}`;
+      const { ax, ay, bx, by } = this._edgeEnds(e);
+      let d;
+      if (e.bend && (e.bend.x || e.bend.y)) d = `M ${ax.toFixed(1)},${ay.toFixed(1)} Q ${e.bend.x.toFixed(1)},${e.bend.y.toFixed(1)} ${bx.toFixed(1)},${by.toFixed(1)}`;
+      else {
+        const mx = (ax + bx) / 2, my = (ay + by) / 2;
+        const dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1;
+        const bow = Math.min(46, L * 0.18);
+        d = `M ${ax.toFixed(1)},${ay.toFixed(1)} Q ${(mx - dy / L * bow).toFixed(1)},${(my + dx / L * bow).toFixed(1)} ${bx.toFixed(1)},${by.toFixed(1)}`;
+      }
+      const mid = this._quadMid(ax, ay, bx, by, e.bend);
       const lbl = e.label
-        ? `<rect x="${mx - 14}" y="${my - 11}" width="28" height="20" rx="5" fill="#fff" stroke="#ffe0c2"/><text x="${mx}" y="${my + 4}" text-anchor="middle" font-size="12" fill="#d97706">${escapeXml(e.label)}</text>`
+        ? `<rect x="${mid.x - 14}" y="${mid.y - 11}" width="28" height="20" rx="5" fill="#fff" stroke="${sel ? "#11b5a4" : "#ffe0c2"}"/><text x="${mid.x}" y="${mid.y + 4}" text-anchor="middle" font-size="12" fill="#d97706">${escapeXml(e.label)}</text>`
         : "";
-      return `<path d="${d}" fill="none" stroke="#ff9f43" stroke-width="2" stroke-dasharray="7 5" stroke-linecap="round"/>${lbl}`;
+      return hitPath(d) + `<path d="${d}" fill="none" stroke="${stroke}" ${`stroke-width="${sw}"`}${dash} stroke-linecap="round"/>${lbl}`;
     }
-    let d, stroke, marker = "";
-    if (this.doc.type === "mindmap") {
+    let d;
+    const { ax, ay, bx, by } = this._edgeEnds(e);
+    if (e.bend && (e.bend.x || e.bend.y)) {
+      // 自由弯曲：拖中点后的二次贝塞尔
+      d = `M ${ax},${ay} Q ${e.bend.x.toFixed(1)},${e.bend.y.toFixed(1)} ${bx},${by}`;
+    } else if (this.doc.type === "mindmap") {
+      // 脑图父子连线（side 决定接出方向，端点由 _edgeEnds 给出）
       const side = b.side || "right";
       const isList = this.doc.layout === "list";
-      let px, py, cx, cy;
-      if (side === "left") { px = a.x; py = a.y + sa.h / 2; cx = b.x + sb.w; cy = b.y + sb.h / 2; }
-      else if (side === "down") { px = a.x + sa.w / 2; py = a.y + sa.h; cx = b.x + sb.w / 2; cy = b.y; }
-      else { px = a.x + sa.w; py = a.y + sa.h / 2; cx = b.x; cy = b.y + sb.h / 2; }
-      stroke = b.stroke || "#11b5a4";
-      if (side === "down") {
-        const my = (py + cy) / 2;
-        d = `M ${px},${py} C ${px},${my} ${cx},${my} ${cx},${cy}`;
-      } else if (isList) {
-        const mx = (px + cx) / 2;
-        d = `M ${px},${py} H ${mx} V ${cy} H ${cx}`;
+      if (side === "down" || isList) {
+        const my = (ay + by) / 2;
+        d = isList
+          ? `M ${ax},${ay} H ${(ax + bx) / 2} V ${by} H ${bx}`
+          : `M ${ax},${ay} C ${ax},${my} ${bx},${my} ${bx},${by}`;
       } else {
-        const dx = cx - px;
-        d = `M ${px},${py} C ${px + dx * 0.5},${py} ${cx - dx * 0.5},${cy} ${cx},${cy}`;
+        const dx = bx - ax;
+        d = `M ${ax},${ay} C ${ax + dx * 0.5},${ay} ${bx - dx * 0.5},${by} ${bx},${by}`;
       }
     } else {
-      const ax = a.x + sa.w / 2, ay = a.y + sa.h / 2, bx = b.x + sb.w / 2, by = b.y + sb.h / 2;
-      const sBottom = ay < by;
-      const sx = ax, sy = sBottom ? a.y + sa.h : a.y;
-      const tx = bx, ty = sBottom ? b.y : b.y + sb.h;
-      const my = (sy + ty) / 2;
-      d = `M ${sx},${sy} C ${sx},${my} ${tx},${my} ${tx},${ty}`;
-      stroke = "#94a3b8";
-      marker = ` marker-end="url(#gm-arrow)"`;
+      const my = (ay + by) / 2;
+      d = `M ${ax},${ay} C ${ax},${my} ${bx},${my} ${bx},${by}`;
     }
+    const marker = this.doc.type === "mindmap" ? "" : ` marker-end="url(#gm-arrow)"`;
     let label = "";
     if (e.label) {
-      const mx = (a.x + b.x) / 2 + sa.w / 4, my = (a.y + b.y) / 2;
-      label = `<rect x="${mx - 14}" y="${my - 11}" width="28" height="20" rx="5" fill="#fff" stroke="#e2e8f0"/><text x="${mx}" y="${my + 4}" text-anchor="middle" font-size="12" fill="#64748b">${escapeXml(e.label)}</text>`;
+      const mid = this._quadMid(ax, ay, bx, by, e.bend);
+      label = `<rect x="${mid.x - 14}" y="${mid.y - 11}" width="28" height="20" rx="5" fill="#fff" stroke="${sel ? "#11b5a4" : "#e2e8f0"}"/><text x="${mid.x}" y="${mid.y + 4}" text-anchor="middle" font-size="12" fill="#64748b">${escapeXml(e.label)}</text>`;
     }
-    return `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="2"${marker}/>${label}`;
+    return hitPath(d) + `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${sw}"${dash}${marker}/>${label}`;
+  }
+
+  // 选中连线的中点手柄：拖动调节弯曲
+  edgeHandleHTML() {
+    const eid = this._selEdgeId();
+    if (!eid) return "";
+    const e = this.edgeById(eid);
+    if (!e) return "";
+    const a = this.nodeById(e.from), b = this.nodeById(e.to);
+    if (!a || !b) return "";
+    const { ax, ay, bx, by } = this._edgeEnds(e);
+    const mid = this._quadMid(ax, ay, bx, by, e.bend);
+    return `<circle class="gm-edge-handle" data-edge="${eid}" cx="${mid.x.toFixed(1)}" cy="${mid.y.toFixed(1)}" r="6" fill="#fff" stroke="#11b5a4" stroke-width="2"/>`;
+  }
+
+  // 连线样式：批量应用到选中的连线（stroke/strokeWidth/strokeStyle）；bend: null 移除 / "straight" 拉直
+  setEdgeStyle(patch) {
+    const ids = [];
+    for (const k of this.selection) if (k.startsWith && k.startsWith("e:")) ids.push(k.slice(2));
+    if (!ids.length) return;
+    for (const e of this.doc.edges) {
+      if (!ids.includes(e.id)) continue;
+      for (const k of Object.keys(patch)) {
+        if (patch[k] === null) delete e[k];
+        else e[k] = patch[k];
+      }
+      if (patch.bend === "straight") {
+        const { ax, ay, bx, by } = this._edgeEnds(e);
+        e.bend = { x: (ax + bx) / 2, y: (ay + by) / 2 };
+      }
+    }
+    this.render(); this.onChange(); this.pushHistory();
   }
 
   strokeHTML(s) {
@@ -527,7 +632,8 @@ export class Editor {
         `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4" fill="#fff" stroke="#ff9f43" stroke-width="2"/>`;
     }
     const s = this.sizes.get(a.id);
-    const sx = a.x + s.w / 2, sy = a.y + s.h;
+    const sx = this._connect.ax != null ? this._connect.ax : a.x + s.w / 2;
+    const sy = this._connect.ay != null ? this._connect.ay : a.y + s.h;
     return `<path d="M ${sx},${sy} C ${sx},${(sy + p.y) / 2} ${p.x},${(sy + p.y) / 2} ${p.x},${p.y}" fill="none" stroke="#11b5a4" stroke-width="2" stroke-dasharray="5 4"/>`;
   }
 
@@ -681,6 +787,13 @@ export class Editor {
       this._pan = { sx: e.clientX - r0.left, sy: e.clientY - r0.top, ox: this.view.x, oy: this.view.y };
       return;
     }
+    // 右键：长按拖拽平移画布（未拖动则由 contextmenu 弹出右键菜单）
+    if (e.button === 2) {
+      e.preventDefault();
+      const r0 = this.rect();
+      this._rmb = { sx: e.clientX - r0.left, sy: e.clientY - r0.top, ox: this.view.x, oy: this.view.y, moved: false };
+      return;
+    }
     if (e.button !== 0) return;
     const r = this.rect();
     const sx = e.clientX - r.left, sy = e.clientY - r.top;
@@ -706,6 +819,20 @@ export class Editor {
       return;
     }
 
+    // 脑图折叠徽标：按下即记录（pointerup 时切换折叠状态）
+    const colEl = target.closest && target.closest(".gm-collapse-badge");
+    if (colEl && this.mode === "mindmap") {
+      this._pendingCollapse = colEl.getAttribute("data-collapse");
+      return;
+    }
+
+    // 选中连线的中点手柄：按下开始拖拽调节弯曲
+    const edgeHandleEl = target.closest && target.closest(".gm-edge-handle");
+    if (edgeHandleEl) {
+      this._edgeDrag = { id: edgeHandleEl.getAttribute("data-edge"), moved: false };
+      return;
+    }
+
     // ---------- 白板：自由变换手柄（直线/箭头端点与弯曲、通用四角/四边缩放）----------
     const handleEl = target.closest && target.closest(".gm-handle");
     if (handleEl && this.mode === "whiteboard") {
@@ -727,7 +854,7 @@ export class Editor {
       return;
     }
 
-    // ---------- 关联线工具（流程图 / 脑图）：点击起点节点 -> 点击目标节点建立连线 ----------
+    // ---------- 关联线（流程图 / 脑图）：按住左键拖拽，遇吸附点自动吸附，松开完成并切回选择工具 ----------
     if ((this.mode === "flowchart" || this.mode === "mindmap") && this.tool === "link") {
       // 脑图：从选中节点四角端点按下 -> 拖拽连线，松开自动吸附目标节点
       const anchorEl = target.closest && target.closest(".gm-anchor");
@@ -745,22 +872,18 @@ export class Editor {
         }
         return;
       }
-      const hitEl = target.closest && target.closest("[data-id]");
-      // 点击未命中节点时自动吸附到光标附近的节点
-      const id = hitEl ? hitEl.getAttribute("data-id") : this.snapNodeAt(e.clientX, e.clientY);
-      if (!this._linkFrom) {
-        if (id) { this._linkFrom = id; this.selection = new Set([id]); this.render(); }
-      } else {
-        if (id && id !== this._linkFrom) {
-          // 脑图关联线（虚线自由连线）；流程图保持原有箭头连线
-          if (this.mode === "mindmap") this.addAssocEdge(this._linkFrom, id);
-          else this.addEdge(this._linkFrom, id);
-          this.onChange();
-          this.pushHistory();
+      // 从节点本体（或光标附近吸附到的节点）按下：起点取节点边框上朝向光标的点
+      const hitEl0 = target.closest && target.closest("[data-id]");
+      const fromId = hitEl0 ? hitEl0.getAttribute("data-id") : this.snapNodeAt(e.clientX, e.clientY);
+      if (fromId) {
+        const fn = this.nodeById(fromId), fs = this.sizes.get(fromId);
+        if (fn && fs) {
+          const wp = this.toWorld(e.clientX, e.clientY);
+          const ep = this._rectEdgePoint(fs.w, fs.h, fn.x + fs.w / 2, fn.y + fs.h / 2, wp.x, wp.y);
+          this.selection = new Set([fromId]);
+          this.render();
+          this._connect = { from: fromId, cx: e.clientX, cy: e.clientY, assoc: this.mode === "mindmap", ax: ep.x, ay: ep.y };
         }
-        this._linkFrom = null;
-        this.selection.clear();
-        this.render();
       }
       return;
     }
@@ -800,9 +923,26 @@ export class Editor {
 
     const portEl = target.closest && target.closest(".gm-port");
     const hitEl = target.closest && target.closest("[data-id]");
-    const id = hitEl ? hitEl.getAttribute("data-id") : null;
+    let id = hitEl ? hitEl.getAttribute("data-id") : null;
 
-    if (portEl && id) { this._connect = { from: id, cx: e.clientX, cy: e.clientY }; return; }
+    // 连线：选中（Shift 叠加多选）；中点手柄已在上方处理
+    const edgeEl = target.closest && target.closest("[data-edge]");
+    if (edgeEl && this.tool === "select" && this.mode !== "whiteboard") {
+      const key = "e:" + edgeEl.getAttribute("data-edge");
+      if (e.shiftKey) {
+        if (this.selection.has(key)) this.selection.delete(key); else this.selection.add(key);
+        this.render();
+      } else if (!this.selection.has(key)) {
+        this.selection = new Set([key]);
+        this.render();
+      }
+      return;
+    }
+
+    if (portEl && id && !(this.nodeById(id) && this.nodeById(id).locked)) { this._connect = { from: id, cx: e.clientX, cy: e.clientY }; return; }
+
+    // 锁定的节点：不可选中 / 拖动（视为空白，走框选或平移）
+    if (id && this.nodeById(id) && this.nodeById(id).locked) id = null;
 
     if (id) {
       if (e.shiftKey) this.select(id, true);
@@ -828,10 +968,30 @@ export class Editor {
 
   onMove(e) {
     if (this._pinch) return;
+    // 右键拖拽平移画布
+    if (this._rmb) {
+      const r = this.rect();
+      const dx = e.clientX - r.left - this._rmb.sx, dy = e.clientY - r.top - this._rmb.sy;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) this._rmb.moved = true;
+      if (this._rmb.moved) { this.view.x = this._rmb.ox + dx; this.view.y = this._rmb.oy + dy; this.render(); }
+      return;
+    }
     // 关联线工具悬停：自动吸附高亮光标附近的节点（点击 / 松开连线时直接采用）
     if (this.tool === "link" && (this.mode === "mindmap" || this.mode === "flowchart") && !this._connect) {
       const hid = this.snapNodeAt(e.clientX, e.clientY);
       if (hid !== this._linkHover) { this._linkHover = hid; this.render(); }
+      return;
+    }
+    // 连线中点手柄拖拽：调节弯曲（反解二次贝塞尔控制点 C = 2M - (P0+P1)/2）
+    if (this._edgeDrag) {
+      const ed = this.edgeById(this._edgeDrag.id);
+      if (ed) {
+        const ends = this._edgeEnds(ed);
+        const w = this.toWorld(e.clientX, e.clientY);
+        ed.bend = { x: 2 * w.x - (ends.ax + ends.bx) / 2, y: 2 * w.y - (ends.ay + ends.by) / 2 };
+        this._edgeDrag.moved = true;
+        this.render();
+      }
       return;
     }
     // 白板：手柄拖拽（直线/箭头端点与弯曲 + 通用自由变换）
@@ -908,7 +1068,12 @@ export class Editor {
       this.render();
       return;
     }
-    if (this._connect) { this._connect.cx = e.clientX; this._connect.cy = e.clientY; this.render(); return; }
+    if (this._connect) {
+      this._connect.cx = e.clientX; this._connect.cy = e.clientY;
+      const snapId = this.snapNodeAt(e.clientX, e.clientY); // 拖拽中吸附点实时高亮
+      if (snapId !== this._connectHover) this._connectHover = snapId;
+      this.render(); return;
+    }
     if (this._marquee) {
       const w = this.toWorld(e.clientX, e.clientY);
       this._marquee.x1 = w.x; this._marquee.y1 = w.y;
@@ -937,6 +1102,8 @@ export class Editor {
   }
 
   onUp(e) {
+    // 右键拖拽平移结束：记录拖动时间戳（供 contextmenu 抑制弹菜单）
+    if (this._rmb) { if (this._rmb.moved) this._rmbDraggedAt = Date.now(); this._rmb = null; return; }
     // 备注徽标：pointerup 时打开备注弹框（任何拖拽分支之前处理）
     if (this._pendingBadge) {
       const id = this._pendingBadge;
@@ -944,7 +1111,15 @@ export class Editor {
       if (this._onNoteBadge) this._onNoteBadge(id);
       return;
     }
+    // 折叠徽标：pointerup 时切换折叠状态
+    if (this._pendingCollapse) {
+      const cid = this._pendingCollapse;
+      this._pendingCollapse = null;
+      this.toggleCollapse(cid);
+      return;
+    }
     if (this._marquee) { this._marquee = null; this.render(); return; } // 选择已在拖拽中实时应用
+    if (this._edgeDrag) { if (this._edgeDrag.moved) { this.onChange(); this.pushHistory(); } this._edgeDrag = null; return; }
     if (this._handle) { if (this._handle.moved) { this.onChange(); this.pushHistory(); } this._handle = null; return; }
     if (this._newShape) { this.finishNewShape(); return; }
     if (this._erasing) { this._erasing = false; if (this._erased) { this.onChange(); this.pushHistory(); } this._erased = false; return; }
@@ -962,15 +1137,51 @@ export class Editor {
         else this.addEdge(this._connect.from, to);
         this.onChange();
         this.pushHistory();
+        this.setTool("select"); // 关联完成自动切回默认选择工具
       }
-      this._connect = null; this.render(); return;
+      this._connect = null; this._connectHover = null; this.render(); return;
     }
     if (this._drag) { if (this._drag.moved) { this.onChange(); this.pushHistory(); } this._drag = null; return; }
     if (this._pan) { this._pan = null; return; }
   }
 
+  // 右键刚拖拽过画布（400ms 内）：contextmenu 不弹菜单
+  rmbJustDragged() { return Date.now() - this._rmbDraggedAt < 400; }
+
+  // 切换节点折叠状态（脑图）：重排布局后渲染
+  toggleCollapse(id) {
+    const n = this.nodeById(id);
+    if (!n || !this.doc.nodes.some((c) => c.parentId === n.id)) return;
+    n.collapsed = !n.collapsed;
+    if (this.doc.type === "mindmap") layoutMindmap(this.doc);
+    this.render(); this.onChange(); this.pushHistory();
+  }
+
+  // 折叠隐藏的节点集合：所有「已折叠节点的后代」
+  hiddenNodes() {
+    if (this.doc.type !== "mindmap") return new Set();
+    const out = new Set();
+    const cm = this.childrenMap();
+    const stack = this.doc.nodes.filter((n) => n.collapsed && (cm.get(n.id) || []).length).map((n) => n.id);
+    while (stack.length) {
+      const id = stack.pop();
+      for (const c of cm.get(id) || []) if (!out.has(c.id)) { out.add(c.id); stack.push(c.id); }
+    }
+    return out;
+  }
+
   onDblClick(e) {
     if (this.readOnly) return;
+    // 双击连线：编辑连线文字（留空清除）
+    const edgeEl = e.target.closest && e.target.closest("[data-edge]");
+    if (edgeEl) {
+      const ed = this.edgeById(edgeEl.getAttribute("data-edge"));
+      if (ed) {
+        const label = prompt("连线文字（留空清除）", ed.label || "");
+        if (label !== null) { ed.label = label.trim() || null; if (!ed.label) delete ed.label; this.render(); this.onChange(); this.pushHistory(); }
+      }
+      return;
+    }
     const hitEl = e.target.closest && e.target.closest("[data-id]");
     if (!hitEl) {
       // 设置：双击空白处创建子节点（脑图，挂在中心主题下）
@@ -991,7 +1202,22 @@ export class Editor {
   }
 
   getMovable(set) {
-    if (this.mode !== "mindmap") return new Set(set);
+    if (this.mode !== "mindmap") {
+      // 白板：组合联动——选中任一成员时整组一起动（锁定节点除外）
+      const out = new Set(set);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const n of this.doc.nodes) {
+          if (n.locked || !n.group || out.has(n.id)) continue;
+          for (const id of out) {
+            const m = this.nodeById(id);
+            if (m && m.group === n.group) { out.add(n.id); changed = true; break; }
+          }
+        }
+      }
+      return out;
+    }
     const out = new Set(set);
     for (const id of set) this.descendants(id, out);
     return out;
@@ -1094,6 +1320,7 @@ export class Editor {
 
   addMindmapChild(parentId) {
     const parent = this.nodeById(parentId); if (!parent) return null;
+    if (parent.collapsed) parent.collapsed = false; // 折叠节点先展开再添加子节点
     const id = newId();
     const node = { id, x: parent.x + 200, y: parent.y, w: 124, h: 44, text: "新节点", shape: "rounded", color: "#fff", textColor: "#1f2a37", stroke: parent.stroke || "#11b5a4", fontSize: 15, parentId, collapsed: false };
     this.doc.nodes.push(node);
@@ -1118,14 +1345,58 @@ export class Editor {
     return id;
   }
   deleteSelection() {
-    const ids = [...this.selection]; if (!ids.length) return;
-    const toDelete = this.getMovable(new Set(ids));
-    this.doc.nodes = this.doc.nodes.filter((n) => !toDelete.has(n.id));
-    this.doc.edges = this.doc.edges.filter((e) => !toDelete.has(e.from) && !toDelete.has(e.to));
+    // 选择集里以 "e:" 前缀标识连线，其余为节点
+    const edgeIds = [];
+    const nodeIds = [];
+    for (const k of this.selection) (k.startsWith && k.startsWith("e:") ? edgeIds : nodeIds).push(k);
+    if (!edgeIds.length && !nodeIds.length) return;
+    let changed = false;
+    if (edgeIds.length) {
+      const del = new Set(edgeIds);
+      this.doc.edges = this.doc.edges.filter((e) => !del.has(e.id));
+      changed = true;
+    }
+    if (nodeIds.length) {
+      // 锁定节点不可删除
+      const ids = nodeIds.filter((id) => { const n = this.nodeById(id); return n && !n.locked; });
+      if (ids.length) {
+        const toDelete = this.getMovable(new Set(ids));
+        this.doc.nodes = this.doc.nodes.filter((n) => !toDelete.has(n.id));
+        this.doc.edges = this.doc.edges.filter((e) => !toDelete.has(e.from) && !toDelete.has(e.to));
+        changed = true;
+      }
+    }
+    if (!changed) return;
     if (this.mode === "mindmap") layoutMindmap(this.doc);
     this.selection.clear();
     this.render(); this.onChange();
     this.pushHistory();
+  }
+
+  // 复制选中元素（含组内成员与连线）为新副本，右下偏移 24
+  duplicateSelection() {
+    const sel = new Set(this.selection);
+    const nodes = this.doc.nodes.filter((n) => sel.has(n.id) && !n.locked);
+    if (!nodes.length) return;
+    const movable = this.getMovable(new Set(nodes.map((n) => n.id)));
+    const all = this.doc.nodes.filter((n) => movable.has(n.id));
+    const idMap = new Map();
+    const clones = all.map((n) => {
+      const c = JSON.parse(JSON.stringify(n));
+      c.id = newId();
+      c.x += 24; c.y += 24;
+      c.group = null;
+      idMap.set(n.id, c.id);
+      return c;
+    });
+    const edges = this.doc.edges
+      .filter((e) => idMap.has(e.from) && idMap.has(e.to))
+      .map((e) => ({ ...e, id: newId(), from: idMap.get(e.from), to: idMap.get(e.to) }));
+    this.doc.nodes.push(...clones);
+    this.doc.edges.push(...edges);
+    this.selection = new Set(clones.map((n) => n.id));
+    if (this.mode === "mindmap") layoutMindmap(this.doc);
+    this.render(); this.onChange(); this.pushHistory();
   }
 
   addFlowShape(shape, wx, wy) {
@@ -1175,7 +1446,7 @@ export class Editor {
   // 应用属性：写入默认 wbProps（影响后续新建图形），并同步到当前选中的节点
   // 脑图节点样式：批量应用到所有选中节点（字段透传到节点，布局重算后渲染）
   setNodeStyle(patch) {
-    const sel = [...this.selection];
+    const sel = [...this.selection].filter((k) => !(k.startsWith && k.startsWith("e:")));
     if (!sel.length) return;
     for (const id of sel) {
       const n = this.nodeById(id);
@@ -1348,6 +1619,7 @@ export class Editor {
     const w = Math.abs(m.x1 - m.x0), h = Math.abs(m.y1 - m.y0);
     const hit = new Set(m.base || []);
     for (const n of this.doc.nodes) {
+      if (n.locked) continue; // 锁定节点不参与框选
       const b = this.nodeBBox(n);
       if (b.x < x + w && b.x + b.w > x && b.y < y + h && b.y + b.h > y) hit.add(n.id);
     }
@@ -1376,8 +1648,9 @@ export class Editor {
     const tol = 6 / this.view.scale;
     // 命中笔画：点到各线段距离
     const strokeHit = (s) => (s.points || []).some((p) => Math.hypot(p.x - w.x, p.y - w.y) <= tol + (s.width || 3) / 2);
-    // 命中节点：包围盒外扩容差
+    // 命中节点：包围盒外扩容差（锁定节点不可擦除）
     const nodeHit = (n) => {
+      if (n.locked) return false;
       const b = this.nodeBBox(n);
       return w.x >= b.x - tol && w.x <= b.x + b.w + tol && w.y >= b.y - tol && w.y <= b.y + b.h + tol;
     };
