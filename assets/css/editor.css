@@ -170,6 +170,8 @@ body.gm-wb-mode #outlineBtn { display: none; }
 .gm-ws-seg:hover { background: #e8edf3; }
 .gm-ws-seg.active { background: #e3ecfd; box-shadow: inset 0 0 0 1.5px #2f80ed; }
 .gm-ws-range { width: 100%; accent-color: #2f80ed; height: 22px; margin: 0; cursor: pointer; }
+/* 白板直线/箭头自由变换手柄（端点/中点） */
+.gm-handle { cursor: move; }
 @media (max-width: 760px) {
   .gm-wb-style { top: auto; bottom: 14px; left: 10px; width: 172px; max-height: 46%; }
 }

@@ -321,6 +321,10 @@ const WB_SHAPE_TOOLS = ["rect", "diamond", "ellipse", "arrow", "line", "pen", "t
 function refreshWbStylePanel() {
   const panel = document.getElementById("wbStylePanel");
   if (!panel || !editor || editor.mode !== "whiteboard") { if (panel) panel.hidden = true; return; }
+  // 文字模式：文字工具激活，或选中了单个文字节点 -> 显示文字专属面板
+  const selNodes = [...editor.selection].map((id) => editor.nodeById(id)).filter(Boolean);
+  const isText = editor.tool === "text" || (selNodes.length === 1 && selNodes[0].shape === "text");
+  if (isText) { renderWbTextPanel(panel); return; }
   // 图形/画笔工具激活或选中了图形时显示
   const show = WB_SHAPE_TOOLS.includes(editor.tool) || editor.selection.size > 0;
   panel.hidden = !show;
@@ -347,7 +351,13 @@ function refreshWbStylePanel() {
       `<button class="gm-ws-seg${p.rounded ? " active" : ""}" data-k="rounded" data-v="true" title="圆角"><svg width="18" height="14"><path d="M3,13 L3,7 Q3,3 7,3 L13,3" fill="none" stroke="#1f2a37" stroke-width="2" stroke-linecap="round"/></svg></button>` +
       `<button class="gm-ws-seg${!p.rounded ? " active" : ""}" data-k="rounded" data-v="false" title="直角"><svg width="18" height="14"><path d="M3,13 L3,3 L13,3" fill="none" stroke="#1f2a37" stroke-width="2" stroke-linecap="round"/></svg></button>` +
     `</div>` +
-    `<div class="gm-ws-t">透明度 <span class="gm-ws-val">${Math.round(p.opacity * 100)}%</span></div>` +
+    wbOpacityLayerHtml(p);
+  wireWsPanelEvents(panel);
+}
+
+// 属性面板公共尾段：透明度滑杆 + 图层排序
+function wbOpacityLayerHtml(p) {
+  return `<div class="gm-ws-t">透明度 <span class="gm-ws-val">${Math.round(p.opacity * 100)}%</span></div>` +
     `<input type="range" class="gm-ws-range" min="10" max="100" step="5" value="${Math.round(p.opacity * 100)}" />` +
     `<div class="gm-ws-t">图层</div>` +
     `<div class="gm-ws-row seg">` +
@@ -356,17 +366,20 @@ function refreshWbStylePanel() {
       `<button class="gm-ws-seg" data-layer="backward" title="下移一层"><svg width="16" height="16"><path d="M4,6 L8,11 L12,6" fill="none" stroke="#1f2a37" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="1.5" width="8" height="2.5" rx="1" fill="#1f2a37"/></svg></button>` +
       `<button class="gm-ws-seg" data-layer="back" title="置于底层"><svg width="16" height="16"><rect x="4" y="2" width="8" height="6" rx="1.5" fill="none" stroke="#1f2a37" stroke-width="1.6"/><path d="M8,15 L5,11 L11,11 Z" fill="#1f2a37"/></svg></button>` +
     `</div>`;
-  // 属性修改事件（含透明度滑杆：拖动实时预览不记历史，松手落一次历史）
+}
+
+// 属性面板公共事件绑定：属性键 / 图层 / 透明度滑杆（拖动实时预览不记历史，松手落一次历史）
+function wireWsPanelEvents(panel) {
   panel.querySelectorAll("[data-k]").forEach((b) => {
     b.addEventListener("click", () => {
       const k = b.dataset.k, v = b.dataset.v;
-      const val = k === "rounded" ? v === "true" : (k === "strokeWidth" || k === "roughness") ? Number(v) : v;
+      const NUM_KEYS = ["strokeWidth", "roughness", "fontSize"];
+      const val = k === "rounded" ? v === "true" : NUM_KEYS.includes(k) ? Number(v) : v;
       editor.setWbProps({ [k]: val });
       refreshWbStylePanel();
       if (k === "stroke") refreshWbActive(); // 同步顶栏色板高亮
     });
   });
-  // 图层排序按钮
   panel.querySelectorAll("[data-layer]").forEach((b) => {
     b.addEventListener("click", () => { editor._reorderLayer(b.dataset.layer); refreshWbStylePanel(); });
   });
@@ -378,6 +391,35 @@ function refreshWbStylePanel() {
     });
     range.addEventListener("change", () => editor.setWbProps({ opacity: Number(range.value) / 100 }, true));
   }
+}
+
+// 白板文字属性面板（文字工具激活 / 选中文字节点时显示）：
+// 文字颜色 / 字体大小(S M L XL) / 字体(无衬线·衬线·代码) / 样式(正常·斜体) / 对齐 / 透明度 / 图层
+function renderWbTextPanel(panel) {
+  const p = editor.getWbProps();
+  panel.hidden = false;
+  const colorSw = (c) => `<button class="gm-ws-swatch${c === p.stroke ? " active" : ""}" data-k="stroke" data-v="${c}" title="${c}" style="background:${c}"></button>`;
+  const sizeBtn = (v, t) => `<button class="gm-ws-seg${p.fontSize === v ? " active" : ""}" data-k="fontSize" data-v="${v}">${t}</button>`;
+  const famBtn = (v, t, st) => `<button class="gm-ws-seg${p.fontFamily === v ? " active" : ""}" data-k="fontFamily" data-v="${v}" style="${st}">${t}</button>`;
+  const styleBtn = (v, t) => `<button class="gm-ws-seg${p.fontStyle === v ? " active" : ""}" data-k="fontStyle" data-v="${v}">${t}</button>`;
+  const alignBtn = (v, svg) => `<button class="gm-ws-seg${p.textAlign === v ? " active" : ""}" data-k="textAlign" data-v="${v}" title="${v === "left" ? "左对齐" : v === "right" ? "右对齐" : "居中"}">${svg}</button>`;
+  panel.innerHTML =
+    `<div class="gm-ws-t">文字颜色</div>` +
+    `<div class="gm-ws-row">${WB_COLORS.map(colorSw).join("")}</div>` +
+    `<div class="gm-ws-t">字体大小</div>` +
+    `<div class="gm-ws-row seg">${sizeBtn(14, "S") + sizeBtn(18, "M") + sizeBtn(24, "L") + sizeBtn(32, "XL")}</div>` +
+    `<div class="gm-ws-t">字体</div>` +
+    `<div class="gm-ws-row seg">${famBtn("sans", "A", "font-weight:600") + famBtn("serif", "A", "font-family:Georgia,serif;font-weight:600") + famBtn("code", "&lt;/&gt;", "font-family:monospace;font-weight:600")}</div>` +
+    `<div class="gm-ws-t">样式</div>` +
+    `<div class="gm-ws-row seg">${styleBtn("normal", "正常") + styleBtn("italic", "<i>斜体</i>")}</div>` +
+    `<div class="gm-ws-t">文本对齐</div>` +
+    `<div class="gm-ws-row seg">` +
+      alignBtn("left", `<svg width="16" height="12"><path d="M1,2 h14 M1,6 h9 M1,10 h12" stroke="#1f2a37" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>`) +
+      alignBtn("center", `<svg width="16" height="12"><path d="M1,2 h14 M3.5,6 h9 M2,10 h12" stroke="#1f2a37" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>`) +
+      alignBtn("right", `<svg width="16" height="12"><path d="M1,2 h14 M6,6 h9 M3,10 h12" stroke="#1f2a37" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>`) +
+    `</div>` +
+    wbOpacityLayerHtml(p);
+  wireWsPanelEvents(panel);
 }
 
 // ---------- 白板右键菜单 ----------
@@ -530,6 +572,7 @@ function updateHelpKeys() {
       `矩形 2 · 菱形 3 · 圆 4<br/>` +
       `箭头 5 · 直线 6 · 画笔 7<br/>` +
       `文字 8 · 图片 9 · 橡皮 0 · 激光笔 K<br/>` +
+      `直线/箭头选中：拖端点移动 · 拖中点弯曲<br/>` +
       `Shift + 拖拽：直线 / 箭头吸附 45°<br/>` +
       `删除：Delete / Backspace<br/>` +
       `撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y<br/>` +
@@ -736,6 +779,7 @@ function wireKeys() {
   document.getElementById("shareBtn").textContent = map.is_public ? "已分享" : "分享";
 
   editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), mode: map.type || "mindmap" });
+  window.__gmEditor = editor; // 测试钩子：headless 验证用
   wireWbContextMenu();
   editor.load(map.data);
   dirty = false; // 初始加载触发的 onChange 不算脏，避免无谓落盘

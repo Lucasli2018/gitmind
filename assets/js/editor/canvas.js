@@ -21,7 +21,8 @@ export class Editor {
     // 白板扩展状态：图形拖拽创建 / 橡皮 / 激光笔 / 当前描边色
     this.toolColor = "#1f2a37";
     // 白板图形默认属性（属性面板数据源）：描边/背景/宽度/边框样式/线条风格/边角/透明度
-    this.wbProps = { stroke: "#1f2a37", fill: "#ffffff", strokeWidth: 2, strokeStyle: "solid", roughness: 0, rounded: true, opacity: 1 };
+    // 文字默认属性：字号/字体族/斜体/对齐（文字工具与文字属性面板共用）
+    this.wbProps = { stroke: "#1f2a37", fill: "#ffffff", strokeWidth: 2, strokeStyle: "solid", roughness: 0, rounded: true, opacity: 1, fontSize: 18, fontStyle: "normal", fontFamily: "sans", textAlign: "center" };
     // 网格显示（右键菜单切换，localStorage 记忆）
     this.showGrid = false;
     try { this.showGrid = localStorage.getItem("gm_wb_grid") === "1"; } catch (_) {}
@@ -75,7 +76,7 @@ export class Editor {
     };
     // 进入双指模式，放弃单指已开始的操作，避免冲突
     this._drag = null; this._pan = null; this._connect = null; this._stroke = null;
-    this._newShape = null; this._erasing = false; this._marquee = null; this._laserDown = false;
+    this._newShape = null; this._erasing = false; this._marquee = null; this._laserDown = false; this._handle = null;
   }
   onTouchMove(e) {
     if (!this._pinch || e.touches.length !== 2) return;
@@ -307,10 +308,16 @@ export class Editor {
       );
       case "arrow":
       case "line": {
-        // w / h 为相对起点的增量（可为负），画在本地坐标系 (0,0) -> (w,h)
+        // w / h 为相对起点的增量（可为负），画在本地坐标系 (0,0) -> (w,h)；
+        // bend 为二次贝塞尔控制点（选中后拖中点产生，实现自由弯曲）
         const arrow = n.shape === "arrow" ? ` marker-end="url(#gm-arrow)"` : "";
-        const d = amp ? this._roughPoly([{ x: 0, y: 0 }, { x: n.w, y: n.h }], seed, amp, false) : `M 0,0 L ${n.w},${n.h}`;
-        return `<path d="${d}" fill="none" stroke="${stroke}" ${sa} stroke-linejoin="round"${arrow}/>`;
+        const bend = n.bend && (n.bend.x || n.bend.y) ? n.bend : null;
+        const d = bend
+          ? `M 0,0 Q ${bend.x.toFixed(1)},${bend.y.toFixed(1)} ${n.w},${n.h}`
+          : amp ? this._roughPoly([{ x: 0, y: 0 }, { x: n.w, y: n.h }], seed, amp, false) : `M 0,0 L ${n.w},${n.h}`;
+        // 加宽透明命中区（14px），方便点选细线
+        const hit = `<path d="${d}" fill="none" stroke="transparent" stroke-width="14" pointer-events="stroke"/>`;
+        return hit + `<path d="${d}" fill="none" stroke="${stroke}" ${sa} stroke-linejoin="round"${arrow}/>`;
       }
       case "image": return `<image href="${n.src || ""}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none"/>`;
       case "embed": {
@@ -351,15 +358,37 @@ export class Editor {
       const LH = fs + 7;
       const totalH = lines.length * LH;
       let startY = h / 2 - totalH / 2 + LH / 2;
+      const isTextShape = n.shape === "text";
+      // 文字节点支持对齐 / 字体 / 斜体（自由文字），其余形状保持居中
+      const align = isTextShape ? (n.textAlign || "center") : "center";
+      const anchor = align === "left" ? "start" : align === "right" ? "end" : "middle";
+      const tx = align === "left" ? 2 : align === "right" ? w - 2 : w / 2;
+      const fam = isTextShape && n.fontFamily === "serif" ? 'Georgia,"Songti SC","SimSun",serif'
+        : isTextShape && n.fontFamily === "code" ? '"SFMono-Regular",Consolas,"Courier New",monospace'
+        : '-apple-system,"PingFang SC","Microsoft YaHei",sans-serif';
+      const italic = isTextShape && n.fontStyle === "italic" ? ` font-style="italic"` : "";
       let tspans = "";
       lines.forEach((ln, i) => {
-        tspans += `<tspan x="${w / 2}" y="${(startY + i * LH).toFixed(1)}">${escapeXml(ln) || " "}</tspan>`;
+        tspans += `<tspan x="${tx}" y="${(startY + i * LH).toFixed(1)}">${escapeXml(ln) || " "}</tspan>`;
       });
       const tcolor = n.textColor || "#1f2a37";
-      inner += `<text x="${w / 2}" y="${h / 2}" text-anchor="middle" font-size="${fs}" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif' fill="${tcolor}" font-weight="${n.shape === "text" ? 600 : 500}">${tspans}</text>`;
+      inner += `<text x="${tx}" y="${h / 2}" text-anchor="${anchor}" font-size="${fs}" font-family='${fam}'${italic} fill="${tcolor}" font-weight="${isTextShape ? 600 : 500}">${tspans}</text>`;
     }
-    // 选中框
-    if (selected) inner += `<rect x="-5" y="-5" width="${w + 10}" height="${h + 10}" rx="14" fill="none" stroke="#11b5a4" stroke-width="2" stroke-dasharray="6 4"/>`;
+    // 选中框（直线/箭头 w、h 可能是负增量，选中框按包围盒画）
+    if (selected) {
+      if (n.shape === "line" || n.shape === "arrow") {
+        const bx = Math.min(0, n.w), by = Math.min(0, n.h), bw = Math.abs(n.w), bh = Math.abs(n.h);
+        inner += `<rect x="${bx - 5}" y="${by - 5}" width="${bw + 10}" height="${bh + 10}" rx="6" fill="none" stroke="#11b5a4" stroke-width="1.5" stroke-dasharray="6 4"/>`;
+      } else {
+        inner += `<rect x="-5" y="-5" width="${w + 10}" height="${h + 10}" rx="14" fill="none" stroke="#11b5a4" stroke-width="2" stroke-dasharray="6 4"/>`;
+      }
+    }
+    // 白板：直线/箭头选中时的自由变换手柄——两端端点 + 中点（拖动弯曲）
+    if (selected && this.mode === "whiteboard" && !this._forExport && (n.shape === "line" || n.shape === "arrow")) {
+      const mid = this._lineMid(n);
+      const H = (hx, hy, kind) => `<circle class="gm-handle" data-id="${n.id}" data-h="${kind}" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="6" fill="#fff" stroke="#11b5a4" stroke-width="2"/>`;
+      inner += H(0, 0, "p0") + H(n.w, n.h, "p1") + H(mid.x, mid.y, "mid");
+    }
     // 流程图连线端口
     if (this.mode === "flowchart" && !this._forExport) {
       const ports = [["top", w / 2, 0], ["bottom", w / 2, h], ["left", 0, h / 2], ["right", w, h / 2]];
@@ -484,6 +513,12 @@ export class Editor {
     return { x: n.x, y: n.y, w: s.w, h: s.h };
   }
 
+  // 直线/箭头：二次贝塞尔中点 B(0.5) = 0.25·P0 + 0.5·C + 0.25·P1（局部坐标，P0=(0,0)）
+  _lineMid(n) {
+    if (n.bend && (n.bend.x || n.bend.y)) return { x: 0.5 * n.bend.x + 0.25 * n.w, y: 0.5 * n.bend.y + 0.25 * n.h };
+    return { x: n.w / 2, y: n.h / 2 };
+  }
+
   getBounds() {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const n of this.doc.nodes) {
@@ -507,6 +542,22 @@ export class Editor {
     if (this.readOnly) {
       if (!e.shiftKey) this.clearSelection();
       this._pan = { sx, sy, ox: this.view.x, oy: this.view.y };
+      return;
+    }
+
+    // ---------- 白板：直线/箭头自由变换手柄（端点 p0/p1、中点 mid）----------
+    const handleEl = target.closest && target.closest(".gm-handle");
+    if (handleEl && this.mode === "whiteboard") {
+      const hid = handleEl.getAttribute("data-id");
+      const hn = this.nodeById(hid);
+      if (hn) {
+        this.selection = new Set([hid]);
+        this._handle = {
+          id: hid, kind: handleEl.getAttribute("data-h"), sx, sy, moved: false,
+          orig: { x: hn.x, y: hn.y, w: hn.w, h: hn.h, bend: hn.bend ? { ...hn.bend } : null },
+        };
+        this.render();
+      }
       return;
     }
 
@@ -592,6 +643,31 @@ export class Editor {
 
   onMove(e) {
     if (this._pinch) return;
+    // 白板：直线/箭头手柄拖拽（自由变换）
+    if (this._handle) {
+      const r = this.rect();
+      const dx = (e.clientX - r.left - this._handle.sx) / this.view.scale;
+      const dy = (e.clientY - r.top - this._handle.sy) / this.view.scale;
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) this._handle.moved = true;
+      const n = this.nodeById(this._handle.id);
+      const o = this._handle.orig;
+      if (n && o) {
+        if (this._handle.kind === "p0") {
+          // 拖起点：起点跟随、终点保持不动（w/h 为终点相对起点的增量）
+          n.x = o.x + dx; n.y = o.y + dy;
+          n.w = o.w - dx; n.h = o.h - dy;
+          if (o.bend) n.bend = { x: o.bend.x - dx, y: o.bend.y - dy };
+        } else if (this._handle.kind === "p1") {
+          n.w = o.w + dx; n.h = o.h + dy;
+        } else if (this._handle.kind === "mid") {
+          // 拖中点：把拖到的位置设为曲线中点，反解二次贝塞尔控制点 C = 2M - (P0+P1)/2
+          const w = this.toWorld(e.clientX, e.clientY);
+          n.bend = { x: 2 * (w.x - n.x) - n.w / 2, y: 2 * (w.y - n.y) - n.h / 2 };
+        }
+        this.render();
+      }
+      return;
+    }
     if (this._stroke) {
       const w = this.toWorld(e.clientX, e.clientY);
       this._stroke.points.push({ x: w.x, y: w.y });
@@ -649,6 +725,7 @@ export class Editor {
 
   onUp(e) {
     if (this._marquee) { this._marquee = null; this.render(); return; } // 选择已在拖拽中实时应用
+    if (this._handle) { if (this._handle.moved) { this.onChange(); this.pushHistory(); } this._handle = null; return; }
     if (this._newShape) { this.finishNewShape(); return; }
     if (this._erasing) { this._erasing = false; if (this._erased) { this.onChange(); this.pushHistory(); } this._erased = false; return; }
     if (this._laser) { this._laserDown = false; this._startLaserLoop(); return; } // 松开即停止绘制，轨迹交给淡出循环清理
@@ -697,14 +774,22 @@ export class Editor {
     // 底色跟随节点填充色，保证文字始终可见（避免白字白底）
     const solid = n.color && n.color !== "#fff" && n.color !== "transparent" && n.color.toLowerCase() !== "#ffffff";
     const bg = solid ? n.color : "#fff";
-    const fg = solid ? (n.textColor || "#fff") : (isLightColor(bg) ? "#1f2a37" : "#fff");
+    const isTextShape = n.shape === "text";
+    const fg = isTextShape ? (n.textColor || "#1f2a37")
+      : solid ? (n.textColor || "#fff") : (isLightColor(bg) ? "#1f2a37" : "#fff");
+    const align = isTextShape ? (n.textAlign || "center") : "center";
+    const fam = isTextShape && n.fontFamily === "serif" ? 'Georgia,"Songti SC","SimSun",serif'
+      : isTextShape && n.fontFamily === "code" ? '"SFMono-Regular",Consolas,"Courier New",monospace'
+      : "inherit";
     const ta = document.createElement("textarea");
     ta.value = n.text || "";
     ta.className = "gm-edit";
     ta.style.cssText =
       `position:fixed; left:${left}px; top:${top}px; width:${Math.max(s.w * this.view.scale, 60)}px; height:${Math.max(s.h * this.view.scale, 30)}px;` +
       `font-size:${ (n.fontSize || 15) * this.view.scale }px; border:2px solid #11b5a4; border-radius:12px; padding:6px 8px;` +
-      `resize:none; outline:none; text-align:center; box-sizing:border-box; font-family:inherit; color:${fg}; background:${bg}; z-index:50; overflow:hidden;`;
+      `resize:none; outline:none; text-align:${align}; box-sizing:border-box; font-family:${fam};` +
+      (isTextShape && n.fontStyle === "italic" ? " font-style:italic;" : "") +
+      ` color:${fg}; background:${bg}; z-index:50; overflow:hidden;`;
     document.body.appendChild(ta);
     ta.focus(); ta.select();
     const commit = () => {
@@ -816,13 +901,21 @@ export class Editor {
     for (const id of sel) {
       const n = this.nodeById(id);
       if (!n || n.shape === "frame" || n.shape === "embed" || n.shape === "image") continue;
-      if ("stroke" in patch && n.shape !== "sticky") n.stroke = patch.stroke;
+      if ("stroke" in patch) {
+        if (n.shape === "text") n.textColor = patch.stroke; // 文字节点：描边色即文字色
+        else if (n.shape !== "sticky") n.stroke = patch.stroke;
+      }
       if ("fill" in patch && n.shape !== "arrow" && n.shape !== "line" && n.shape !== "text") n.color = patch.fill;
       if ("strokeWidth" in patch) n.strokeWidth = patch.strokeWidth;
       if ("strokeStyle" in patch) n.strokeStyle = patch.strokeStyle;
       if ("roughness" in patch) n.roughness = patch.roughness;
       if ("rounded" in patch && n.shape === "rect") n.rounded = patch.rounded;
       if ("opacity" in patch) n.opacity = patch.opacity;
+      // 文字专属属性
+      if ("fontSize" in patch && n.shape === "text") n.fontSize = patch.fontSize;
+      if ("fontStyle" in patch && n.shape === "text") n.fontStyle = patch.fontStyle;
+      if ("fontFamily" in patch && n.shape === "text") n.fontFamily = patch.fontFamily;
+      if ("textAlign" in patch && n.shape === "text") n.textAlign = patch.textAlign;
     }
     this.render();
     this.onChange();
@@ -834,8 +927,9 @@ export class Editor {
       .filter((n) => n.shape !== "frame" && n.shape !== "embed" && n.shape !== "image");
     if (sel.length === 1) {
       const n = sel[0];
-      return {
-        stroke: n.stroke || this.wbProps.stroke,
+      const isText = n.shape === "text";
+      const props = {
+        stroke: isText ? (n.textColor || this.wbProps.stroke) : (n.stroke || this.wbProps.stroke),
         fill: n.color == null ? "#ffffff" : n.color,
         strokeWidth: n.strokeWidth || 2,
         strokeStyle: n.strokeStyle || "solid",
@@ -843,6 +937,13 @@ export class Editor {
         rounded: n.rounded !== false,
         opacity: n.opacity == null ? 1 : n.opacity,
       };
+      if (isText) Object.assign(props, {
+        fontSize: n.fontSize || 18,
+        fontStyle: n.fontStyle || "normal",
+        fontFamily: n.fontFamily || "sans",
+        textAlign: n.textAlign || "center",
+      });
+      return props;
     }
     return { ...this.wbProps };
   }
@@ -1037,7 +1138,13 @@ export class Editor {
   // ---------- 白板元素创建 ----------
   addTextNode(wx, wy) {
     const id = newId();
-    const node = { id, x: wx - 120, y: wy - 20, w: 240, h: 40, text: "", shape: "text", color: "transparent", textColor: this.toolColor, stroke: "transparent", fontSize: 18, parentId: null, collapsed: false };
+    const P = this.wbProps;
+    const node = {
+      id, x: wx - 120, y: wy - 20, w: 240, h: 40, text: "", shape: "text", color: "transparent",
+      textColor: this.toolColor, stroke: "transparent", fontSize: P.fontSize || 18,
+      fontStyle: P.fontStyle || "normal", fontFamily: P.fontFamily || "sans", textAlign: P.textAlign || "center",
+      parentId: null, collapsed: false,
+    };
     this.doc.nodes.push(node);
     this.selection = new Set([id]);
     this.render(); this.onChange(); this.pushHistory();
