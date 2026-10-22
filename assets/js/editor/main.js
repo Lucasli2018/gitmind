@@ -172,21 +172,165 @@ function buildToolbar() {
   const wbBar = document.getElementById("wbBar");
   bar.innerHTML = "";
   const mode = editor.mode;
-  // 白板 / 流程图模式切换 body 类：隐藏左侧工具栏与脑图专属面板，启用顶部浮动工具栏
+  // 白板 / 流程图 / 脑图模式切换 body 类：隐藏左侧工具栏与脑图专属面板，启用顶部浮动工具栏
   document.body.classList.toggle("gm-wb-mode", mode === "whiteboard" || mode === "flowchart");
-  if (wbBar) wbBar.hidden = !(mode === "whiteboard" || mode === "flowchart");
+  if (wbBar) wbBar.hidden = !(mode === "whiteboard" || mode === "flowchart" || mode === "mindmap");
   refreshWbStylePanel(); // 非白板模式会在函数内部自动隐藏属性面板
-  if (mode === "mindmap") {
-    addTool(bar, "plus", "子节点", () => { const sel = [...editor.selection][0]; if (sel) editor.addMindmapChild(sel); else ensureRoot(); });
-    addTool(bar, "plus", "兄弟", () => { const sel = [...editor.selection][0]; if (sel) editor.addMindmapSibling(sel); });
-    addTool(bar, "trash", "删除", () => editor.deleteSelection());
-    addTool(bar, "fit", "布局", () => { layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); });
+  if (mode === "mindmap" && wbBar) {
+    buildMmBar(wbBar); // 脑图顶部工具栏（参考 mind-map）：节点操作 + 图片/图标/超链接/备注 + 关联线
   } else if (mode === "flowchart" && wbBar) {
     buildFcBar(wbBar);
   } else if (mode === "whiteboard" && wbBar) {
     buildWbBar(wbBar);
   }
   updateHelpKeys();
+}
+
+// 脑图顶部工具栏（图标在上文字在下，参考 mind-map）
+const MM_TOOLS = [
+  { act: "undo", label: "回退", icon: "undo" },
+  { act: "redo", label: "前进", icon: "redo" },
+
+  { act: "child", label: "子节点", icon: "plus", key: "Tab" },
+  { act: "sibling", label: "同级节点", icon: "plus", key: "Enter" },
+  { act: "delete", label: "删除节点", icon: "trash" },
+
+  { act: "image", label: "图片", icon: "image" },
+  { act: "icon", label: "图标", icon: "smiley" },
+  { act: "href", label: "超链接", icon: "link" },
+  { act: "note", label: "备注", icon: "note" },
+
+  { act: "link", label: "关联线", icon: "assoc", key: "L" },
+  { act: "layout", label: "整理布局", icon: "fit" },
+];
+const MM_EMOJIS = ["💡", "⭐", "🔥", "✅", "❌", "❓", "❗", "🎯", "📌", "🚩", "🚀", "⏰", "📅", "👤", "💰", "📄", "📊", "🔑", "🔒", "🧠", "😊", "🎉", "⚠️", "❤️"];
+function buildMmBar(bar) {
+  bar.innerHTML = "";
+  bar.classList.add("gm-fc-bar");
+  const groupOf = (act) => (act === "undo" || act === "redo" ? 1
+    : act === "child" || act === "sibling" || act === "delete" ? 2
+    : act === "image" || act === "icon" || act === "href" || act === "note" ? 3 : 4);
+  let lastGroup = null;
+  for (const t of MM_TOOLS) {
+    const group = groupOf(t.act);
+    if (lastGroup !== null && group !== lastGroup) bar.appendChild(wbSep());
+    lastGroup = group;
+    const b = document.createElement("button");
+    b.className = "gm-fc-btn";
+    b.dataset.act = t.act;
+    b.title = t.key ? `${t.label} (${t.key})` : t.label;
+    b.innerHTML = `${ICONS[t.icon] || ""}<span class="lbl">${t.label}</span>`;
+    if (t.act === "icon") {
+      // 图标按钮：emoji 网格弹层，再点同一个 emoji 取消
+      const wrap = document.createElement("div");
+      wrap.className = "gm-wb-more";
+      const pop = document.createElement("div");
+      pop.className = "pop gm-emoji-pop";
+      for (const em of MM_EMOJIS) {
+        const it = document.createElement("button");
+        it.textContent = em;
+        it.addEventListener("click", (ev) => { ev.stopPropagation(); wrap.classList.remove("open"); onMmAction("icon", em); });
+        pop.appendChild(it);
+      }
+      b.addEventListener("click", (e) => { e.stopPropagation(); wrap.classList.toggle("open"); });
+      pop.addEventListener("click", (e) => e.stopPropagation());
+      wrap.appendChild(b);
+      wrap.appendChild(pop);
+      bar.appendChild(wrap);
+      continue;
+    }
+    b.addEventListener("click", () => onMmAction(t.act));
+    bar.appendChild(b);
+  }
+  refreshFcActive();
+}
+function onMmAction(act, arg) {
+  const selId = [...editor.selection][0];
+  const node = selId ? editor.nodeById(selId) : null;
+  const needNode = () => { if (!node) toast("请先选中一个节点", "info"); return !node; };
+  if (act === "undo") { editor.undo(); return; }
+  if (act === "redo") { editor.redo(); return; }
+  if (act === "delete") { editor.deleteSelection(); return; }
+  if (act === "layout") { layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); return; }
+  if (act === "child") { if (selId) editor.addMindmapChild(selId); else ensureRoot(); return; }
+  if (act === "sibling") { if (!needNode()) editor.addMindmapSibling(selId); return; }
+  if (act === "image") { if (!needNode()) document.getElementById("wbImageFile").click(); return; }
+  if (act === "icon") {
+    if (needNode()) return;
+    editor.setNodeStyle({ icon: node.icon === arg ? null : arg });
+    return;
+  }
+  if (act === "href") {
+    if (needNode()) return;
+    const url = prompt("输入超链接地址（留空移除）", node.href || "https://");
+    if (url === null) return;
+    if (url.trim() && !/^https?:\/\//i.test(url.trim())) { toast("请输入 http(s):// 开头的网址", "error"); return; }
+    editor.setNodeStyle({ href: url.trim() || null });
+    return;
+  }
+  if (act === "note") {
+    if (needNode()) return;
+    const txt = prompt("输入备注内容（留空移除，悬停节点徽标可查看）", node.note || "");
+    if (txt === null) return;
+    editor.setNodeStyle({ note: txt.trim() || null });
+    return;
+  }
+  if (act === "link") {
+    editor.setTool(editor.tool === "link" ? "select" : "link");
+    refreshFcActive();
+    if (editor.tool === "link") toast("关联线：先点起始节点，再点目标节点", "info");
+  }
+}
+
+// ---------- 脑图节点样式面板（左侧浮动，选中节点时显示，参考 mind-map 节点样式） ----------
+const MM_TEXT_COLORS = ["#1f2a37", "#e03131", "#2f80ed", "#0b7d73", "#f59f00", "#7048e8"];
+const MM_BG_COLORS = ["#ffffff", "#fff3bf", "#ffe3e3", "#d3f9d8", "#d0ebff", "#e5dbff", "transparent"];
+const MM_STROKE_COLORS = ["#94a3b8", "#1f2a37", "#e03131", "#2f80ed", "#0b7d73", "#f59f00", "#7048e8"];
+function renderMmNodePanel(panel) {
+  const nodes = [...editor.selection].map((id) => editor.nodeById(id)).filter(Boolean);
+  panel.hidden = nodes.length === 0;
+  if (!nodes.length) return;
+  const n = nodes[0];
+  const fs = n.fontSize || 15;
+  const sw = (k, c, cur) => `<button class="gm-ws-swatch${c === cur ? " active" : ""}" data-k="${k}" data-v="${c}" title="${c === "transparent" ? "透明" : c}"><span class="gm-ws-fill" style="background:${c}"></span></button>`;
+  const fsBtn = (v, t) => `<button class="gm-ws-seg${fs === v ? " active" : ""}" data-k="fontSize" data-v="${v}">${t}</button>`;
+  const toggleBtn = (k, label, attr) => `<button class="gm-ws-seg${n[k] ? " active" : ""}" data-k="${k}" data-v="1" title="${label}">${attr}</button>`;
+  const widthBtn = (v, t) => `<button class="gm-ws-seg${(n.strokeWidth || 2) === v ? " active" : ""}" data-k="strokeWidth" data-v="${v}">${t}</button>`;
+  const styleBtn = (v, t, dash) => `<button class="gm-ws-seg${(n.strokeStyle || "solid") === v ? " active" : ""}" data-k="strokeStyle" data-v="${v}" title="${t}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="2"${dash}/></svg></button>`;
+  const shapeBtn = (v, t) => `<button class="gm-ws-seg${(n.shape || "rounded") === v ? " active" : ""}" data-k="shape" data-v="${v}">${t}</button>`;
+  panel.innerHTML =
+    `<div class="gm-ws-t">文字颜色</div>` +
+    `<div class="gm-ws-row">${MM_TEXT_COLORS.map((c) => sw("textColor", c, n.textColor || "#1f2a37")).join("")}</div>` +
+    `<div class="gm-ws-t">字号</div>` +
+    `<div class="gm-ws-row seg">${fsBtn(14, "S") + fsBtn(15, "M") + fsBtn(18, "L") + fsBtn(24, "XL")}</div>` +
+    `<div class="gm-ws-t">样式</div>` +
+    `<div class="gm-ws-row seg">${toggleBtn("bold", "加粗", "<b>B</b>") + toggleBtn("italic", "斜体", "<i>I</i>") + toggleBtn("underline", "下划线", "<u>U</u>")}</div>` +
+    `<div class="gm-ws-t">背景</div>` +
+    `<div class="gm-ws-row">${MM_BG_COLORS.map((c) => sw("color", c, n.color == null ? "#ffffff" : n.color)).join("")}</div>` +
+    `<div class="gm-ws-t">边框颜色</div>` +
+    `<div class="gm-ws-row">${MM_STROKE_COLORS.map((c) => sw("stroke", c, n.stroke || "#94a3b8")).join("")}</div>` +
+    `<div class="gm-ws-t">边框宽度</div>` +
+    `<div class="gm-ws-row seg">${widthBtn(1, "细") + widthBtn(2, "中") + widthBtn(4, "粗")}</div>` +
+    `<div class="gm-ws-t">边框样式</div>` +
+    `<div class="gm-ws-row seg">${styleBtn("solid", "实线", "") + styleBtn("dashed", "虚线", ' stroke-dasharray="5 3"') + styleBtn("dotted", "点线", ' stroke-dasharray="0.5 3.5" stroke-linecap="round"')}</div>` +
+    `<div class="gm-ws-t">形状</div>` +
+    `<div class="gm-ws-row seg">${shapeBtn("rounded", "圆角") + shapeBtn("rect", "矩形") + shapeBtn("underline", "下划线")}</div>` +
+    (n.image
+      ? `<div class="gm-ws-t">图片</div><div class="gm-ws-row seg"><button class="gm-ws-seg" data-k="image" data-v="__remove__">移除图片</button></div>`
+      : "");
+  panel.querySelectorAll("[data-k]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const k = b.dataset.k;
+      let v = b.dataset.v;
+      if (k === "bold" || k === "italic" || k === "underline") v = !n[k];
+      else if (k === "fontSize" || k === "strokeWidth") v = Number(v);
+      else if (v === "__remove__") v = null;
+      editor.setNodeStyle({ [k]: v });
+      refreshMmPanelKeep();
+    });
+  });
+  // 重渲染面板（保留在原位）
+  function refreshMmPanelKeep() { renderMmNodePanel(panel); }
 }
 
 // 流程图顶部工具栏（图标在上、文字在下，参考 mind-map）
@@ -312,7 +456,10 @@ const WB_BG_COLORS = ["transparent", "#ffc9c9", "#b2f2bb", "#a5d8ff", "#ffec99",
 const WB_SHAPE_TOOLS = ["rect", "diamond", "ellipse", "arrow", "line", "pen", "text"];
 function refreshWbStylePanel() {
   const panel = document.getElementById("wbStylePanel");
-  if (!panel || !editor || editor.mode !== "whiteboard") { if (panel) panel.hidden = true; return; }
+  if (!panel || !editor) { if (panel) panel.hidden = true; return; }
+  // 脑图模式：选中节点时显示节点样式面板
+  if (editor.mode === "mindmap") { renderMmNodePanel(panel); return; }
+  if (editor.mode !== "whiteboard") { panel.hidden = true; return; }
   // 文字模式：文字工具激活，或选中了单个文字节点 -> 显示文字专属面板
   const selNodes = [...editor.selection].map((id) => editor.nodeById(id)).filter(Boolean);
   const isText = editor.tool === "text" || (selNodes.length === 1 && selNodes[0].shape === "text");
@@ -595,8 +742,9 @@ function updateHelpKeys() {
       `保存：Ctrl/⌘ + S`;
   } else {
     el.innerHTML =
-      `脑图：Tab 加子节点 · Enter 加兄弟<br/>` +
-      `框选：空白处左键拖拽（Shift 叠加）<br/>` +
+      `脑图：Tab 加子节点 · Enter 加同级<br/>` +
+      `关联线 L（点起点再点目标）· 图片 / 图标 / 超链接 / 备注 在顶部工具栏<br/>` +
+      `选中节点：左侧面板改样式（颜色/字号/加粗/形状）<br/>` +
       `删除：Delete / Backspace<br/>` +
       `撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y / ⌘+Shift+Z<br/>` +
       `平移：中键拖拽 / Alt+拖拽 · 缩放：滚轮<br/>` +
@@ -633,9 +781,12 @@ const SHORTCUTS = {
     ],
   },
   mindmap: {
-    工具: [["加子节点", ["Tab"]], ["加兄弟节点", ["Enter"]]],
+    工具: [
+      ["加子节点", ["Tab"]], ["加同级节点", ["Enter"]], ["关联线", ["L"]],
+      ["图片 / 图标", ["选中节点", "点顶部工具栏"]], ["超链接 / 备注", ["选中节点", "点顶部工具栏"]],
+    ],
     编辑器: [
-      ["框选多选", ["拖空白处", "或", "Shift+拖"]],
+      ["节点样式", ["选中节点", "左侧面板"]], ["框选多选", ["拖空白处", "或", "Shift+拖"]],
       ["移动画布", ["中键拖拽", "或", "Alt+拖拽"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]],
       ["删除", ["Delete"]], ["撤销 / 重做", ["Ctrl+Z", "/", "Ctrl+Y"]], ["保存", ["Ctrl+S"]],
     ],
@@ -771,6 +922,15 @@ function wireChrome() {
     reader.onload = () => {
       const img = new Image();
       img.onload = () => {
+        // 脑图模式：图片附加到选中节点（图片在上、文字在下）
+        if (editor.mode === "mindmap") {
+          const selId = [...editor.selection][0];
+          if (!selId) { toast("请先选中一个节点", "info"); return; }
+          const maxW = 160;
+          const sc = Math.min(1, maxW / (img.naturalWidth || maxW));
+          editor.setNodeStyle({ image: reader.result, imageW: Math.round(img.naturalWidth * sc), imageH: Math.round(img.naturalHeight * sc) });
+          return;
+        }
         const c = editor.viewCenterWorld();
         editor.addImageNode(reader.result, c.x, c.y, img.naturalWidth, img.naturalHeight);
         editor.setTool("select");
@@ -784,6 +944,8 @@ function wireChrome() {
   titleInput.addEventListener("input", () => { map.title = titleInput.value; scheduleSave(); });
   wireBottomBars();
   wireMobileDrawers();
+  // 点击空白处关闭工具栏弹层（emoji 选择等）
+  document.addEventListener("click", () => document.querySelectorAll(".gm-wb-more.open").forEach((m) => m.classList.remove("open")));
   // 每分钟自动保存一次（替代实时保存），操作时不发请求以提升流畅度
   autosaveTimer = setInterval(autosaveTick, AUTOSAVE_MS);
   // 兜底：切走/关闭页面若有未保存改动，立即落盘，最多丢 <1 分钟
@@ -824,6 +986,12 @@ function wireKeys() {
       return;
     }
     if (e.key === "Enter" && editor.mode === "mindmap") { e.preventDefault(); const sel = [...editor.selection][0]; if (sel) editor.addMindmapSibling(sel); return; }
+    // 脑图关联线工具快捷键 L
+    if ((e.key === "l" || e.key === "L") && editor.mode === "mindmap" && !e.ctrlKey && !e.metaKey) {
+      editor.setTool(editor.tool === "link" ? "select" : "link");
+      refreshFcActive();
+      return;
+    }
     // 流程图工具快捷键（V 选择 / 1-6 图形 / 7 图片 / L 关联线）
     if (editor.mode === "flowchart") {
       const fcKeys = { v: "select", "1": "shape:rect", "2": "shape:rounded", "3": "shape:diamond", "4": "shape:ellipse", "5": "shape:parallelogram", "6": "shape:text", "7": "image", l: "link" };

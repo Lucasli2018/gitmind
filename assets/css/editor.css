@@ -349,3 +349,13 @@ body.gm-side-hidden .gm-right { display: none; }
   .gm-help-fab { display: none; }
   .gm-side-toggle { display: none; }
 }
+
+/* ---------- 脑图工具栏 emoji 弹层 ---------- */
+.gm-emoji-pop {
+  display: none; grid-template-columns: repeat(6, 36px); gap: 2px; padding: 8px; min-width: 0;
+}
+.gm-wb-more.open .gm-emoji-pop { display: grid; }
+.gm-emoji-pop button {
+  display: flex; align-items: center; justify-content: center; width: 36px; height: 34px;
+  font-size: 19px; padding: 0; border-radius: 8px; text-align: center;
+}

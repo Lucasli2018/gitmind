@@ -40,8 +40,15 @@ export function sizeOf(n, type) {
   const fs = n.fontSize || 15;
   const lines = wrapText(n.text, type === "mindmap" ? 240 : n.shape === "text" ? 340 : Infinity, fs);
   if (type === "mindmap") {
-    const w = Math.min(260, Math.max(90, (lines.length ? Math.max(...lines.map((l) => measureText(l, fs))) : 0) + 32));
-    const h = Math.max(40, lines.length * (fs + 7) + 14);
+    // 图标（emoji）占一个字号宽度；图片在文字上方，撑大节点
+    const extraW = n.icon ? fs : 0;
+    let w = Math.min(280, Math.max(90, (lines.length ? Math.max(...lines.map((l) => measureText(l, fs))) : 0) + 32 + extraW));
+    let h = Math.max(40, lines.length * (fs + 7) + 14);
+    if (n.image) {
+      const iw = n.imageW || 120;
+      w = Math.max(w, iw + 24);
+      h += (n.imageH || 80) + 14;
+    }
     return { w, h, lines };
   }
   if (n.shape === "text") {

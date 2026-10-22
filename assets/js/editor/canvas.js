@@ -203,6 +203,8 @@ export class Editor {
       for (const n of this.doc.nodes) {
         if (n.parentId && this.nodeById(n.parentId)) edges.push({ id: "p-" + n.id, from: n.parentId, to: n.id });
       }
+      // 关联线（工具栏创建的任意两节点连线）附加在父子连线之上
+      edges = edges.concat(this.doc.edges.filter((e) => e.assoc));
     }
     for (const e of edges) html += this.edgeHTML(e);
     // 自由画笔
@@ -302,6 +304,9 @@ export class Editor {
       case "parallelogram": return `<polygon points="18,0 ${w},0 ${w - 18},${h} 0,${h}" fill="${fill}" stroke="${stroke}" ${sa}/>`;
       case "sticky": return `<g filter="url(#gm-shadow)"><rect x="0" y="0" width="${w}" height="${h}" rx="6" fill="${fill}" stroke="${stroke}" ${this._wbStrokeAttrs({ ...n, strokeWidth: n.strokeWidth || 1.5 })}/></g>`;
       case "text": return ``;
+      case "underline":
+        // 脑图「下划线」样式：只画节点底部一条线（文字由 nodeHTML 渲染）
+        return `<path d="M 1,${h - 3} H ${w - 1}" fill="none" stroke="${stroke}" ${sa} stroke-linecap="round"/>`;
       case "frame": return (
         `<rect x="0" y="0" width="${w}" height="${h}" rx="8" fill="none" stroke="#aab3bf" stroke-width="1.5" stroke-dasharray="8 6"/>` +
         `<text x="2" y="-9" font-size="14" font-weight="600" fill="#8a94a6" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(n.text || "")}</text>`
@@ -357,7 +362,10 @@ export class Editor {
       const fs = n.fontSize || 15;
       const LH = fs + 7;
       const totalH = lines.length * LH;
-      let startY = h / 2 - totalH / 2 + LH / 2;
+      // 脑图节点图片：图片在上、文字在下
+      const img = n.image && this.doc.type === "mindmap" ? { w: n.imageW || 120, h: n.imageH || 80 } : null;
+      const baseY = img ? 8 + img.h + 8 + totalH / 2 : h / 2;
+      let startY = baseY - totalH / 2 + LH / 2;
       const isTextShape = n.shape === "text";
       // 文字节点支持对齐 / 字体 / 斜体（自由文字），其余形状保持居中
       const align = isTextShape ? (n.textAlign || "center") : "center";
@@ -367,12 +375,27 @@ export class Editor {
         : isTextShape && n.fontFamily === "code" ? '"SFMono-Regular",Consolas,"Courier New",monospace'
         : '-apple-system,"PingFang SC","Microsoft YaHei",sans-serif';
       const italic = isTextShape && n.fontStyle === "italic" ? ` font-style="italic"` : "";
+      const weight = n.bold ? 700 : isTextShape ? 600 : 500;
+      const deco = n.underline ? ` text-decoration="underline"` : "";
       let tspans = "";
       lines.forEach((ln, i) => {
-        tspans += `<tspan x="${tx}" y="${(startY + i * LH).toFixed(1)}">${escapeXml(ln) || " "}</tspan>`;
+        const prefix = i === 0 && n.icon ? n.icon + " " : "";
+        tspans += `<tspan x="${tx}" y="${(startY + i * LH).toFixed(1)}">${prefix}${escapeXml(ln) || " "}</tspan>`;
       });
       const tcolor = n.textColor || "#1f2a37";
-      inner += `<text x="${tx}" y="${h / 2}" text-anchor="${anchor}" font-size="${fs}" font-family='${fam}'${italic} fill="${tcolor}" font-weight="${isTextShape ? 600 : 500}">${tspans}</text>`;
+      if (img) inner += `<image href="${escapeXml(n.image)}" x="${((w - img.w) / 2).toFixed(1)}" y="8" width="${img.w}" height="${img.h}" preserveAspectRatio="xMidYMid meet"/>`;
+      inner += `<text x="${tx}" y="${baseY}" text-anchor="${anchor}" font-size="${fs}" font-family='${fam}'${italic}${deco} fill="${tcolor}" font-weight="${weight}">${tspans}</text>`;
+    }
+    // 脑图节点徽标：备注（橙色）/ 超链接（蓝色，可点击打开），悬停显示内容
+    if (this.doc.type === "mindmap" && (n.note || n.href)) {
+      let bx = w - 2;
+      if (n.note) {
+        inner += `<g transform="translate(${bx},-4)"><title>${escapeXml(n.note)}</title><circle r="8" fill="#ff9f43" stroke="#fff" stroke-width="1.5"/><text y="3.5" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">注</text></g>`;
+        bx -= 20;
+      }
+      if (n.href) {
+        inner += `<a href="${escapeXml(n.href)}" target="_blank" rel="noopener"><g transform="translate(${bx},-4)"><title>${escapeXml(n.href)}</title><circle r="8" fill="#2f80ed" stroke="#fff" stroke-width="1.5"/><text y="3.5" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">链</text></g></a>`;
+      }
     }
     // 选中框（直线/箭头 w、h 可能是负增量，选中框按包围盒画）
     if (selected) {
@@ -403,6 +426,18 @@ export class Editor {
     if (!a || !b) return "";
     const sa = this.sizes.get(a.id), sb = this.sizes.get(b.id);
     if (!sa || !sb) return "";
+    // 关联线：任意两节点间的橙色虚线曲线（脑图模式工具栏创建）
+    if (e.assoc) {
+      const ax = a.x + sa.w / 2, ay = a.y + sa.h / 2, bx = b.x + sb.w / 2, by = b.y + sb.h / 2;
+      const mx = (ax + bx) / 2, my = (ay + by) / 2;
+      const dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1;
+      const bow = Math.min(46, L * 0.18);
+      const d = `M ${ax.toFixed(1)},${ay.toFixed(1)} Q ${(mx - dy / L * bow).toFixed(1)},${(my + dx / L * bow).toFixed(1)} ${bx.toFixed(1)},${by.toFixed(1)}`;
+      const lbl = e.label
+        ? `<rect x="${mx - 14}" y="${my - 11}" width="28" height="20" rx="5" fill="#fff" stroke="#ffe0c2"/><text x="${mx}" y="${my + 4}" text-anchor="middle" font-size="12" fill="#d97706">${escapeXml(e.label)}</text>`
+        : "";
+      return `<path d="${d}" fill="none" stroke="#ff9f43" stroke-width="2" stroke-dasharray="7 5" stroke-linecap="round"/>${lbl}`;
+    }
     let d, stroke, marker = "";
     if (this.doc.type === "mindmap") {
       const side = b.side || "right";
@@ -568,15 +603,17 @@ export class Editor {
       return;
     }
 
-    // ---------- 流程图关联线工具：点击起点节点 -> 点击目标节点建立连线 ----------
-    if (this.mode === "flowchart" && this.tool === "link") {
+    // ---------- 关联线工具（流程图 / 脑图）：点击起点节点 -> 点击目标节点建立连线 ----------
+    if ((this.mode === "flowchart" || this.mode === "mindmap") && this.tool === "link") {
       const hitEl = target.closest && target.closest("[data-id]");
       const id = hitEl ? hitEl.getAttribute("data-id") : null;
       if (!this._linkFrom) {
         if (id) { this._linkFrom = id; this.selection = new Set([id]); this.render(); }
       } else {
         if (id && id !== this._linkFrom) {
-          this.addEdge(this._linkFrom, id);
+          // 脑图关联线（虚线自由连线）；流程图保持原有箭头连线
+          if (this.mode === "mindmap") this.addAssocEdge(this._linkFrom, id);
+          else this.addEdge(this._linkFrom, id);
           this.onChange();
           this.pushHistory();
         }
@@ -862,6 +899,13 @@ export class Editor {
     this.doc.edges.push({ id: newId(), from, to, label: label || "", arrow: true });
   }
 
+  // 脑图关联线：任意两节点之间的自由连线（虚线曲线，随节点删除自动清理）
+  addAssocEdge(from, to, label) {
+    if (from === to) return;
+    if (this.doc.edges.some((e) => e.assoc && e.from === from && e.to === to)) return;
+    this.doc.edges.push({ id: newId(), from, to, label: label || "", assoc: true });
+  }
+
   addMindmapChild(parentId) {
     const parent = this.nodeById(parentId); if (!parent) return null;
     const id = newId();
@@ -941,6 +985,22 @@ export class Editor {
 
   // ---------- 白板属性面板 ----------
   // 应用属性：写入默认 wbProps（影响后续新建图形），并同步到当前选中的节点
+  // 脑图节点样式：批量应用到所有选中节点（字段透传到节点，布局重算后渲染）
+  setNodeStyle(patch) {
+    const sel = [...this.selection];
+    if (!sel.length) return;
+    for (const id of sel) {
+      const n = this.nodeById(id);
+      if (!n) continue;
+      for (const k of Object.keys(patch)) {
+        if (patch[k] === null) delete n[k]; // null = 移除该属性（备注/超链接/图片/图标）
+        else n[k] = patch[k];
+      }
+    }
+    if (this.doc.type === "mindmap") layoutMindmap(this.doc);
+    this.render(); this.onChange(); this.pushHistory();
+  }
+
   setWbProps(patch, useHistory = true) {
     Object.assign(this.wbProps, patch);
     if ("stroke" in patch) this.toolColor = patch.stroke;
