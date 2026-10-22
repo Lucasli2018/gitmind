@@ -39,6 +39,25 @@ export function fmtDate(ts) {
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+// 时间仅显示 时:分（保存状态用）
+export function fmtTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+// 字节数人性化：B / KB / MB
+export function fmtSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  const kb = n / 1024;
+  if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
+  return `${(kb / 1024).toFixed(1)} MB`;
+}
+// 字符串 UTF-8 字节数
+export function byteLength(str) {
+  return new TextEncoder().encode(str || "").length;
+}
 export function uid() { return crypto.randomUUID(); }
 
 // 简易提示条

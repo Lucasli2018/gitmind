@@ -1,5 +1,5 @@
 // 编辑器入口：加载导图、自动保存、工具栏、主题、导出、分享、快捷键
-import { Auth, getMap, saveMap, setShare, toast } from "../api.js";
+import { Auth, getMap, saveMap, setShare, toast, fmtTime, fmtSize, byteLength } from "../api.js";
 import { ICONS } from "../icons.js";
 import { Editor } from "./canvas.js";
 import { FLOW_SHAPES } from "./flowchart.js";
@@ -49,6 +49,14 @@ let editor = null;
 let dirty = false;          // 是否有未保存的本地改动
 let autosaveTimer = null;
 const AUTOSAVE_MS = 60000;  // 每分钟自动落盘一次，替代实时保存
+let lastSavedAt = null;     // 最近一次成功保存的时间戳（用于状态栏展示）
+
+// 当前文档序列化后的字节数（近似文件大小）
+function docSize() {
+  if (!editor) return 0;
+  try { return byteLength(JSON.stringify(editor.doc)); }
+  catch (_) { return 0; }
+}
 
 // onChange 入口：不再实时保存，仅标记脏并记录状态，由定时器每分钟落盘
 function scheduleSave() {
@@ -63,8 +71,9 @@ async function saveNow() {
   if (!dirty) { setStatus("saved", "已保存"); return; }
   setStatus("saving", "保存中…");
   try {
-    await saveMap(mapId, { title: map.title, data: editor.doc });
+    const r = await saveMap(mapId, { title: map.title, data: editor.doc });
     dirty = false;
+    lastSavedAt = (r && r.updated_at) || Date.now();
     setStatus("saved", "已保存");
   } catch (e) {
     setStatus("saved", "保存失败");
@@ -74,7 +83,12 @@ async function saveNow() {
 function setStatus(cls, text) {
   const s = document.getElementById("status");
   s.className = "gm-status " + cls;
-  s.textContent = text;
+  // 已保存 -> 「已保存 09:39 · 12.3 KB」；其余状态附文件大小
+  const parts = [];
+  if (cls === "saved" && text === "已保存" && lastSavedAt) parts.push(`已保存 ${fmtTime(lastSavedAt)}`);
+  else parts.push(text);
+  if (editor) parts.push(fmtSize(docSize()));
+  s.textContent = parts.join(" · ");
 }
 
 // ---------- 根节点（空白脑图） ----------
@@ -322,6 +336,8 @@ function wireKeys() {
   editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, mode: map.type || "mindmap" });
   editor.load(map.data);
   dirty = false; // 初始加载触发的 onChange 不算脏，避免无谓落盘
+  lastSavedAt = map.updated_at || Date.now();
+  setStatus("saved", "已保存");
   document.querySelectorAll("#modes button").forEach((b) => b.classList.toggle("active", b.dataset.mode === editor.mode));
   if (editor.mode === "mindmap") ensureRoot();
 
