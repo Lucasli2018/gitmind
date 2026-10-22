@@ -21,6 +21,10 @@ export function layoutMindmap(doc, layout) {
   }
   if (!roots.length) return;
 
+  // 稳定化基准：重排前根节点位置（布局结束后整体平移对齐，避免加节点/改样式时导图整体跳动）
+  const anchorRoot = roots[0];
+  const ax0 = anchorRoot.x, ay0 = anchorRoot.y;
+
   const getH = (n) => sizeOf(n, "mindmap").h;
   const getW = (n) => sizeOf(n, "mindmap").w;
 
@@ -140,4 +144,22 @@ export function layoutMindmap(doc, layout) {
       placeY(root, baseY);
     }
   }
+
+  // 稳定化：重排后整体平移，使根节点位置与重排前一致（修复工具栏操作导致导图位置改变）
+  const dx = Math.round(ax0 - anchorRoot.x), dy = Math.round(ay0 - anchorRoot.y);
+  if (dx || dy) for (const n of nodes) { n.x += dx; n.y += dy; }
+}
+
+// 全部节点（按脑图尺寸）的包围盒中心
+function bboxCenter(nodes) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of nodes) {
+    const s = sizeOf(n, "mindmap");
+    if (minX > n.x) minX = n.x;
+    if (minY > n.y) minY = n.y;
+    if (maxX < n.x + s.w) maxX = n.x + s.w;
+    if (maxY < n.y + s.h) maxY = n.y + s.h;
+  }
+  if (minX === Infinity) return null;
+  return { cx: (minX + maxX) / 2, cy: (minY + maxY) / 2 };
 }

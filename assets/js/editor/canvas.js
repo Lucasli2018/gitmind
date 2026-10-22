@@ -406,11 +406,28 @@ export class Editor {
         inner += `<rect x="-5" y="-5" width="${w + 10}" height="${h + 10}" rx="14" fill="none" stroke="#11b5a4" stroke-width="2" stroke-dasharray="6 4"/>`;
       }
     }
-    // 白板：直线/箭头选中时的自由变换手柄——两端端点 + 中点（拖动弯曲）
-    if (selected && this.mode === "whiteboard" && !this._forExport && (n.shape === "line" || n.shape === "arrow")) {
-      const mid = this._lineMid(n);
-      const H = (hx, hy, kind) => `<circle class="gm-handle" data-id="${n.id}" data-h="${kind}" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="6" fill="#fff" stroke="#11b5a4" stroke-width="2"/>`;
-      inner += H(0, 0, "p0") + H(n.w, n.h, "p1") + H(mid.x, mid.y, "mid");
+    // 关联线工具：悬停吸附的节点高亮（橙色虚线框）
+    if (this.tool === "link" && this._linkHover === n.id && !this._forExport) {
+      inner += `<rect x="-8" y="-8" width="${w + 16}" height="${h + 16}" rx="16" fill="none" stroke="#ff9f43" stroke-width="2.5" stroke-dasharray="7 5"/>`;
+    }
+    // 白板：选中元素的自由变换手柄
+    if (selected && this.mode === "whiteboard" && !this._forExport) {
+      if (n.shape === "line" || n.shape === "arrow") {
+        // 直线/箭头：两端端点 + 中点（拖动弯曲）
+        const mid = this._lineMid(n);
+        const H = (hx, hy, kind) => `<circle class="gm-handle" data-id="${n.id}" data-h="${kind}" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="6" fill="#fff" stroke="#11b5a4" stroke-width="2"/>`;
+        inner += H(0, 0, "p0") + H(n.w, n.h, "p1") + H(mid.x, mid.y, "mid");
+      } else if (n.shape !== "embed") {
+        // 通用自由变换：四角手柄；文本仅四角（等比缩放字号），其余图形加四边中点手柄
+        const H = (hx, hy, kind, cur) => `<rect class="gm-handle" data-id="${n.id}" data-h="${kind}" x="${(hx - 5).toFixed(1)}" y="${(hy - 5).toFixed(1)}" width="10" height="10" rx="2" fill="#fff" stroke="#11b5a4" stroke-width="2" style="cursor:${cur}"/>`;
+        for (const [hx, hy, k, cur] of [[0, 0, "nw", "nwse-resize"], [w, 0, "ne", "nesw-resize"], [0, h, "sw", "nesw-resize"], [w, h, "se", "nwse-resize"]]) inner += H(hx, hy, k, cur);
+        if (n.shape !== "text") inner += H(w / 2, 0, "n", "ns-resize") + H(w / 2, h, "s", "ns-resize") + H(0, h / 2, "w", "ew-resize") + H(w, h / 2, "e", "ew-resize");
+      }
+    }
+    // 脑图：选中节点四角端点（作为关联线起点，可拖出连线，目标节点自动吸附）
+    if (selected && this.mode === "mindmap" && !this._forExport) {
+      const A = (hx, hy, c) => `<circle class="gm-anchor" data-id="${n.id}" data-c="${c}" cx="${hx}" cy="${hy}" r="5" fill="#11b5a4" stroke="#fff" stroke-width="1.5"/>`;
+      inner += A(0, 0, "nw") + A(w, 0, "ne") + A(0, h, "sw") + A(w, h, "se");
     }
     // 流程图连线端口
     if (this.mode === "flowchart" && !this._forExport) {
@@ -426,13 +443,15 @@ export class Editor {
     if (!a || !b) return "";
     const sa = this.sizes.get(a.id), sb = this.sizes.get(b.id);
     if (!sa || !sb) return "";
-    // 关联线：任意两节点间的橙色虚线曲线（脑图模式工具栏创建）
+    // 关联线：任意两节点间的橙色虚线曲线（端点自动吸附到两侧节点边框）
     if (e.assoc) {
-      const ax = a.x + sa.w / 2, ay = a.y + sa.h / 2, bx = b.x + sb.w / 2, by = b.y + sb.h / 2;
-      const mx = (ax + bx) / 2, my = (ay + by) / 2;
-      const dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1;
+      const acx = a.x + sa.w / 2, acy = a.y + sa.h / 2, bcx = b.x + sb.w / 2, bcy = b.y + sb.h / 2;
+      const pa = this._rectEdgePoint(sa.w, sa.h, acx, acy, bcx, bcy);
+      const pb = this._rectEdgePoint(sb.w, sb.h, bcx, bcy, acx, acy);
+      const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
+      const dx = pb.x - pa.x, dy = pb.y - pa.y, L = Math.hypot(dx, dy) || 1;
       const bow = Math.min(46, L * 0.18);
-      const d = `M ${ax.toFixed(1)},${ay.toFixed(1)} Q ${(mx - dy / L * bow).toFixed(1)},${(my + dx / L * bow).toFixed(1)} ${bx.toFixed(1)},${by.toFixed(1)}`;
+      const d = `M ${pa.x.toFixed(1)},${pa.y.toFixed(1)} Q ${(mx - dy / L * bow).toFixed(1)},${(my + dx / L * bow).toFixed(1)} ${pb.x.toFixed(1)},${pb.y.toFixed(1)}`;
       const lbl = e.label
         ? `<rect x="${mx - 14}" y="${my - 11}" width="28" height="20" rx="5" fill="#fff" stroke="#ffe0c2"/><text x="${mx}" y="${my + 4}" text-anchor="middle" font-size="12" fill="#d97706">${escapeXml(e.label)}</text>`
         : "";
@@ -484,10 +503,44 @@ export class Editor {
   tempConnectHTML() {
     const a = this.nodeById(this._connect.from);
     if (!a) return "";
+    const p = this.toWorld(this._connect.cx, this._connect.cy);
+    // 脑图关联线拖拽中：从四角端点出发的橙色虚线
+    if (this._connect.assoc) {
+      const s = this.sizes.get(a.id);
+      const sx = this._connect.ax != null ? this._connect.ax : a.x + s.w / 2;
+      const sy = this._connect.ay != null ? this._connect.ay : a.y + s.h;
+      return `<circle cx="${sx}" cy="${sy}" r="5" fill="#11b5a4" stroke="#fff" stroke-width="1.5"/>` +
+        `<path d="M ${sx},${sy} L ${p.x.toFixed(1)},${p.y.toFixed(1)}" fill="none" stroke="#ff9f43" stroke-width="2" stroke-dasharray="7 5"/>` +
+        `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4" fill="#fff" stroke="#ff9f43" stroke-width="2"/>`;
+    }
     const s = this.sizes.get(a.id);
     const sx = a.x + s.w / 2, sy = a.y + s.h;
-    const p = this.toWorld(this._connect.cx, this._connect.cy);
     return `<path d="M ${sx},${sy} C ${sx},${(sy + p.y) / 2} ${p.x},${(sy + p.y) / 2} ${p.x},${p.y}" fill="none" stroke="#11b5a4" stroke-width="2" stroke-dasharray="5 4"/>`;
+  }
+
+  // 从矩形中心指向目标点的射线与矩形边框的交点（关联线端点吸附）
+  _rectEdgePoint(w, h, cx, cy, tx, ty) {
+    const dx = tx - cx, dy = ty - cy;
+    let t = Infinity;
+    if (dx !== 0) t = Math.min(t, w / 2 / Math.abs(dx));
+    if (dy !== 0) t = Math.min(t, h / 2 / Math.abs(dy));
+    if (!isFinite(t)) return { x: cx, y: cy };
+    return { x: cx + dx * t, y: cy + dy * t };
+  }
+
+  // 关联线自动吸附：光标所在 / 附近（26px 容差）的最近节点 id，无则 null
+  snapNodeAt(clientX, clientY) {
+    const w = this.toWorld(clientX, clientY);
+    const tol = 26 / this.view.scale;
+    let best = null, bestD = Infinity;
+    for (const n of this.doc.nodes) {
+      const b = this.nodeBBox(n);
+      const dx = Math.max(b.x - w.x, 0, w.x - (b.x + b.w));
+      const dy = Math.max(b.y - w.y, 0, w.y - (b.y + b.h));
+      const d = Math.hypot(dx, dy);
+      if (d <= tol && d < bestD) { bestD = d; best = n.id; }
+    }
+    return best;
   }
 
   // ---------- 查找 ----------
@@ -587,16 +640,27 @@ export class Editor {
       return;
     }
 
-    // ---------- 白板：直线/箭头自由变换手柄（端点 p0/p1、中点 mid）----------
+    // ---------- 抓手工具（脑图 / 流程图 / 白板通用）：拖拽平移画布 ----------
+    if (this.tool === "hand") {
+      this._pan = { sx, sy, ox: this.view.x, oy: this.view.y };
+      return;
+    }
+
+    // ---------- 白板：自由变换手柄（直线/箭头端点与弯曲、通用四角/四边缩放）----------
     const handleEl = target.closest && target.closest(".gm-handle");
     if (handleEl && this.mode === "whiteboard") {
       const hid = handleEl.getAttribute("data-id");
       const hn = this.nodeById(hid);
       if (hn) {
         this.selection = new Set([hid]);
+        const hs = this.sizes.get(hid) || sizeOf(hn, this.doc.type);
         this._handle = {
           id: hid, kind: handleEl.getAttribute("data-h"), sx, sy, moved: false,
-          orig: { x: hn.x, y: hn.y, w: hn.w, h: hn.h, bend: hn.bend ? { ...hn.bend } : null },
+          orig: {
+            x: hn.x, y: hn.y, fs: hn.fontSize || 18,
+            w: hn.w != null ? hn.w : hs.w, h: hn.h != null ? hn.h : hs.h,
+            bend: hn.bend ? { ...hn.bend } : null,
+          },
         };
         this.render();
       }
@@ -605,8 +669,25 @@ export class Editor {
 
     // ---------- 关联线工具（流程图 / 脑图）：点击起点节点 -> 点击目标节点建立连线 ----------
     if ((this.mode === "flowchart" || this.mode === "mindmap") && this.tool === "link") {
+      // 脑图：从选中节点四角端点按下 -> 拖拽连线，松开自动吸附目标节点
+      const anchorEl = target.closest && target.closest(".gm-anchor");
+      if (anchorEl && this.mode === "mindmap") {
+        const aid = anchorEl.getAttribute("data-id");
+        const an = this.nodeById(aid);
+        const as = this.sizes.get(aid);
+        if (an && as) {
+          const c = anchorEl.getAttribute("data-c") || "se";
+          this._connect = {
+            from: aid, assoc: true,
+            ax: an.x + (c.includes("e") ? as.w : 0), ay: an.y + (c.includes("s") ? as.h : 0),
+            cx: e.clientX, cy: e.clientY,
+          };
+        }
+        return;
+      }
       const hitEl = target.closest && target.closest("[data-id]");
-      const id = hitEl ? hitEl.getAttribute("data-id") : null;
+      // 点击未命中节点时自动吸附到光标附近的节点
+      const id = hitEl ? hitEl.getAttribute("data-id") : this.snapNodeAt(e.clientX, e.clientY);
       if (!this._linkFrom) {
         if (id) { this._linkFrom = id; this.selection = new Set([id]); this.render(); }
       } else {
@@ -628,9 +709,6 @@ export class Editor {
     if (this.mode === "whiteboard") {
       const w = this.toWorld(e.clientX, e.clientY);
       switch (this.tool) {
-        case "hand":
-          this._pan = { sx, sy, ox: this.view.x, oy: this.view.y };
-          return;
         case "pen": {
           this._stroke = { id: newId(), points: [{ x: w.x, y: w.y }], color: this.toolColor, width: Math.max(1.5, (this.wbProps.strokeWidth || 2) * 1.5) };
           return;
@@ -690,7 +768,13 @@ export class Editor {
 
   onMove(e) {
     if (this._pinch) return;
-    // 白板：直线/箭头手柄拖拽（自由变换）
+    // 关联线工具悬停：自动吸附高亮光标附近的节点（点击 / 松开连线时直接采用）
+    if (this.tool === "link" && (this.mode === "mindmap" || this.mode === "flowchart") && !this._connect) {
+      const hid = this.snapNodeAt(e.clientX, e.clientY);
+      if (hid !== this._linkHover) { this._linkHover = hid; this.render(); }
+      return;
+    }
+    // 白板：手柄拖拽（直线/箭头端点与弯曲 + 通用自由变换）
     if (this._handle) {
       const r = this.rect();
       const dx = (e.clientX - r.left - this._handle.sx) / this.view.scale;
@@ -699,17 +783,39 @@ export class Editor {
       const n = this.nodeById(this._handle.id);
       const o = this._handle.orig;
       if (n && o) {
-        if (this._handle.kind === "p0") {
+        const k = this._handle.kind;
+        if (k === "p0") {
           // 拖起点：起点跟随、终点保持不动（w/h 为终点相对起点的增量）
           n.x = o.x + dx; n.y = o.y + dy;
           n.w = o.w - dx; n.h = o.h - dy;
           if (o.bend) n.bend = { x: o.bend.x - dx, y: o.bend.y - dy };
-        } else if (this._handle.kind === "p1") {
+        } else if (k === "p1") {
           n.w = o.w + dx; n.h = o.h + dy;
-        } else if (this._handle.kind === "mid") {
+        } else if (k === "mid") {
           // 拖中点：把拖到的位置设为曲线中点，反解二次贝塞尔控制点 C = 2M - (P0+P1)/2
           const w = this.toWorld(e.clientX, e.clientY);
           n.bend = { x: 2 * (w.x - n.x) - n.w / 2, y: 2 * (w.y - n.y) - n.h / 2 };
+        } else if (n.shape === "text") {
+          // 文本：从对角等比缩放，字号随之缩放（宽高由字号重新推导）
+          const ratio = Math.max(0.15, Math.min(8,
+            ((o.w + (k.includes("e") ? dx : -dx)) / o.w + (o.h + (k.includes("s") ? dy : -dy)) / o.h) / 2));
+          const fs = Math.max(8, Math.min(128, o.fs * ratio));
+          n.fontSize = fs;
+          const nw = o.w * (fs / o.fs), nh = o.h * (fs / o.fs);
+          n.x = k.includes("e") ? o.x : o.x + o.w - nw;
+          n.y = k.includes("s") ? o.y : o.y + o.h - nh;
+          n.w = nw; n.h = nh;
+        } else {
+          // 通用自由变换：四角 / 四边手柄调整 x/y/w/h（设最小尺寸防拖没）
+          let x = o.x, y = o.y, w2 = o.w, h2 = o.h;
+          if (k.includes("e")) w2 = o.w + dx;
+          if (k.includes("w")) { w2 = o.w - dx; x = o.x + dx; }
+          if (k.includes("s")) h2 = o.h + dy;
+          if (k.includes("n")) { h2 = o.h - dy; y = o.y + dy; }
+          const minW = n.shape === "embed" ? 200 : 12, minH = n.shape === "embed" ? 150 : 10;
+          if (w2 < minW) { if (k.includes("w")) x = o.x + o.w - minW; w2 = minW; }
+          if (h2 < minH) { if (k.includes("n")) y = o.y + o.h - minH; h2 = minH; }
+          n.x = x; n.y = y; n.w = w2; n.h = h2;
         }
         this.render();
       }
@@ -782,9 +888,15 @@ export class Editor {
     }
     if (this._connect) {
       const hitEl = e.target.closest && e.target.closest("[data-id]");
-      const to = hitEl ? hitEl.getAttribute("data-id") : null;
-      if (to && to !== this._connect.from) this.addEdge(this._connect.from, to);
-      this._connect = null; this.render(); this.onChange(); this.pushHistory(); return;
+      let to = hitEl ? hitEl.getAttribute("data-id") : null;
+      if (!to || to === this._connect.from) to = this.snapNodeAt(e.clientX, e.clientY); // 松开时自动吸附附近节点
+      if (to && to !== this._connect.from) {
+        if (this._connect.assoc) this.addAssocEdge(this._connect.from, to);
+        else this.addEdge(this._connect.from, to);
+        this.onChange();
+        this.pushHistory();
+      }
+      this._connect = null; this.render(); return;
     }
     if (this._drag) { if (this._drag.moved) { this.onChange(); this.pushHistory(); } this._drag = null; return; }
     if (this._pan) { this._pan = null; return; }
@@ -976,7 +1088,9 @@ export class Editor {
   setTool(tool) {
     this.tool = tool;
     this._linkFrom = null; // 切换工具时放弃未完成的关联线
-    if (tool === "select" || tool === "hand") this.container.style.cursor = "default";
+    this._linkHover = null;
+    if (tool === "select") this.container.style.cursor = "default";
+    else if (tool === "hand") this.container.style.cursor = "grab";
     else if (tool === "laser") this.container.style.cursor = "crosshair";
     else this.container.style.cursor = "crosshair";
     if (tool !== "laser") this._laser = null;

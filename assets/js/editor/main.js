@@ -190,6 +190,7 @@ function buildToolbar() {
 const MM_TOOLS = [
   { act: "undo", label: "回退", icon: "undo" },
   { act: "redo", label: "前进", icon: "redo" },
+  { act: "hand", label: "抓手", icon: "hand", key: "H" },
 
   { act: "child", label: "子节点", icon: "plus", key: "Tab" },
   { act: "sibling", label: "同级节点", icon: "plus", key: "Enter" },
@@ -207,7 +208,7 @@ const MM_EMOJIS = ["💡", "⭐", "🔥", "✅", "❌", "❓", "❗", "🎯", "�
 function buildMmBar(bar) {
   bar.innerHTML = "";
   bar.classList.add("gm-fc-bar");
-  const groupOf = (act) => (act === "undo" || act === "redo" ? 1
+  const groupOf = (act) => (act === "undo" || act === "redo" || act === "hand" ? 1
     : act === "child" || act === "sibling" || act === "delete" ? 2
     : act === "image" || act === "icon" || act === "href" || act === "note" ? 3 : 4);
   let lastGroup = null;
@@ -250,6 +251,7 @@ function onMmAction(act, arg) {
   const needNode = () => { if (!node) toast("请先选中一个节点", "info"); return !node; };
   if (act === "undo") { editor.undo(); return; }
   if (act === "redo") { editor.redo(); return; }
+  if (act === "hand") { editor.setTool(editor.tool === "hand" ? "select" : "hand"); refreshFcActive(); return; }
   if (act === "delete") { editor.deleteSelection(); return; }
   if (act === "layout") { layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); return; }
   if (act === "child") { if (selId) editor.addMindmapChild(selId); else ensureRoot(); return; }
@@ -375,7 +377,8 @@ function refreshFcActive() {
   document.querySelectorAll("#wbBar .gm-fc-btn").forEach((b) => {
     const isSelect = b.dataset.act === "select" && editor.tool === "select";
     const isLink = b.dataset.act === "link" && editor.tool === "link";
-    b.classList.toggle("active", isSelect || isLink);
+    const isHand = b.dataset.act === "hand" && editor.tool === "hand";
+    b.classList.toggle("active", isSelect || isLink || isHand);
   });
 }
 
@@ -723,6 +726,8 @@ function updateHelpKeys() {
       `箭头 5 · 直线 6 · 画笔 7<br/>` +
       `文字 8 · 图片 9 · 橡皮 0 · 激光笔 K<br/>` +
       `直线/箭头选中：拖端点移动 · 拖中点弯曲<br/>` +
+      `图形/文本选中：拖四角/四边手柄自由变换<br/>` +
+      `文本选中：拖四角等比缩放字号<br/>` +
       `Shift + 拖拽：直线 / 箭头吸附 45°<br/>` +
       `框选：空白处左键拖拽（Shift 叠加）<br/>` +
       `删除：Delete / Backspace<br/>` +
@@ -743,11 +748,11 @@ function updateHelpKeys() {
   } else {
     el.innerHTML =
       `脑图：Tab 加子节点 · Enter 加同级<br/>` +
-      `关联线 L（点起点再点目标）· 图片 / 图标 / 超链接 / 备注 在顶部工具栏<br/>` +
+      `关联线 L（点起点再点目标，或拖节点四角端点连线，自动吸附）· 图片 / 图标 / 超链接 / 备注 在顶部工具栏<br/>` +
       `选中节点：左侧面板改样式（颜色/字号/加粗/形状）<br/>` +
       `删除：Delete / Backspace<br/>` +
       `撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y / ⌘+Shift+Z<br/>` +
-      `平移：中键拖拽 / Alt+拖拽 · 缩放：滚轮<br/>` +
+      `平移：抓手 H / 中键拖拽 / Alt+拖拽 · 缩放：滚轮<br/>` +
       `保存：Ctrl/⌘ + S`;
   }
 }
@@ -762,7 +767,7 @@ const SHORTCUTS = {
     ],
     编辑器: [
       ["移动画布", ["中键拖拽", "/", "Alt+拖拽"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]],
-      ["框选多选", ["拖空白处", "或", "Shift+拖"]], ["直线变换", ["拖端点 / 中点"]], ["删除", ["Delete"]],
+      ["框选多选", ["拖空白处", "或", "Shift+拖"]], ["直线变换", ["拖端点 / 中点"]], ["自由变换", ["拖四角 / 四边手柄"]], ["删除", ["Delete"]],
       ["复制 / 粘贴", ["Ctrl+C", "/", "V"]], ["全部选中", ["Ctrl+A"]], ["显示网格", ["Ctrl+'"]],
       ["复制为 PNG", ["Shift+Alt+C"]], ["统计信息", ["Alt+/"]],
       ["撤销 / 重做", ["Ctrl+Z", "/", "Ctrl+Y"]], ["保存", ["Ctrl+S"]],
@@ -783,11 +788,12 @@ const SHORTCUTS = {
   mindmap: {
     工具: [
       ["加子节点", ["Tab"]], ["加同级节点", ["Enter"]], ["关联线", ["L"]],
-      ["图片 / 图标", ["选中节点", "点顶部工具栏"]], ["超链接 / 备注", ["选中节点", "点顶部工具栏"]],
+      ["抓手 / 平移", ["H"]], ["图片 / 图标", ["选中节点", "点顶部工具栏"]], ["超链接 / 备注", ["选中节点", "点顶部工具栏"]],
     ],
     编辑器: [
       ["节点样式", ["选中节点", "左侧面板"]], ["框选多选", ["拖空白处", "或", "Shift+拖"]],
-      ["移动画布", ["中键拖拽", "或", "Alt+拖拽"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]],
+      ["关联线吸附", ["拖节点四角端点", "或", "悬停自动吸附"]],
+      ["移动画布", ["抓手 H", "/", "中键拖拽", "或", "Alt+拖拽"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]],
       ["删除", ["Delete"]], ["撤销 / 重做", ["Ctrl+Z", "/", "Ctrl+Y"]], ["保存", ["Ctrl+S"]],
     ],
   },
@@ -986,9 +992,14 @@ function wireKeys() {
       return;
     }
     if (e.key === "Enter" && editor.mode === "mindmap") { e.preventDefault(); const sel = [...editor.selection][0]; if (sel) editor.addMindmapSibling(sel); return; }
-    // 脑图关联线工具快捷键 L
+    // 脑图关联线工具快捷键 L / 抓手工具快捷键 H
     if ((e.key === "l" || e.key === "L") && editor.mode === "mindmap" && !e.ctrlKey && !e.metaKey) {
       editor.setTool(editor.tool === "link" ? "select" : "link");
+      refreshFcActive();
+      return;
+    }
+    if ((e.key === "h" || e.key === "H") && editor.mode === "mindmap" && !e.ctrlKey && !e.metaKey) {
+      editor.setTool(editor.tool === "hand" ? "select" : "hand");
       refreshFcActive();
       return;
     }
