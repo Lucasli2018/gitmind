@@ -1,5 +1,5 @@
 // 仪表盘：列表 / 新建 / 分享 / 重命名 / 删除
-import { Auth, getMaps, createMap, saveMap, deleteMap, setShare, fmtDate, toast } from "./api.js";
+import { Auth, getMaps, createMap, saveMap, deleteMap, setShare, fmtDate, fmtSize, toast } from "./api.js";
 import { ICONS } from "./icons.js";
 import { TEMPLATES, emptyDoc } from "./templates.js";
 
@@ -40,7 +40,7 @@ function renderList() {
       `<div class="preview">${TYPE_ICON[m.type] || ICONS.mindmap}</div>` +
       `<div class="meta">` +
         `<h3>${escapeHtml(m.title)} ${m.is_public ? '<span class="pub">公开</span>' : ""}</h3>` +
-        `<div class="time">${TYPE_NAME[m.type] || ""} · 更新 ${fmtDate(m.updated_at)}</div>` +
+        `<div class="time">${TYPE_NAME[m.type] || ""} · 更新 ${fmtDate(m.updated_at)}${m.size ? " · " + fmtSize(m.size) : ""}</div>` +
       `</div>` +
       `<div class="acts">` +
         `<button class="btn btn-primary btn-sm" data-act="open">打开</button>` +

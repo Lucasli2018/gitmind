@@ -7,7 +7,9 @@ export async function onRequestGet({ request, env }) {
   const u = await parseUser(env, request);
   if (!u) return json({ error: "未登录" }, 401);
   const rows = await env.DB.prepare(
-    "SELECT id,title,type,is_public,created_at,updated_at FROM gm_maps WHERE user_id=? ORDER BY updated_at DESC"
+    "SELECT id,title,type,is_public,created_at,updated_at," +
+    "CASE WHEN size>0 THEN size ELSE LENGTH(CAST(data AS BLOB)) END AS size " +
+    "FROM gm_maps WHERE user_id=? ORDER BY updated_at DESC"
   ).bind(u.id).all();
   return json({ maps: rows.results || [] });
 }

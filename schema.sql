@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS gm_maps (
   data       TEXT NOT NULL DEFAULT '{}',
   is_public  INTEGER NOT NULL DEFAULT 0,
   storage    TEXT NOT NULL DEFAULT 'd1',
+  size       INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

@@ -22,6 +22,7 @@ const SCHEMA = [
      data TEXT NOT NULL DEFAULT '{}',
      is_public INTEGER NOT NULL DEFAULT 0,
      storage TEXT NOT NULL DEFAULT 'd1',
+     size INTEGER NOT NULL DEFAULT 0,
      created_at INTEGER NOT NULL,
      updated_at INTEGER NOT NULL
    )`,
@@ -44,18 +45,24 @@ async function ensure(env) {
       for (const sql of SCHEMA) await env.DB.prepare(sql).run();
       console.log("[middleware] 已初始化 gm_ 表");
     } else {
-      // 兼容已部署库：补 storage 列（R2 优先存储标记）
+      // 兼容已部署库：补 storage 列（R2 优先存储标记）+ size 列（文件字节数）
       try {
         const cols = await env.DB.prepare("PRAGMA table_info(gm_maps)").all();
-        const hasStorage = (cols.results || []).some((c) => c.name === "storage");
-        if (!hasStorage) {
+        const names = (cols.results || []).map((c) => c.name);
+        if (!names.includes("storage")) {
           await env.DB.prepare(
             "ALTER TABLE gm_maps ADD COLUMN storage TEXT NOT NULL DEFAULT 'd1'"
           ).run();
           console.log("[middleware] 已为 gm_maps 补 storage 列");
         }
+        if (!names.includes("size")) {
+          await env.DB.prepare(
+            "ALTER TABLE gm_maps ADD COLUMN size INTEGER NOT NULL DEFAULT 0"
+          ).run();
+          console.log("[middleware] 已为 gm_maps 补 size 列");
+        }
       } catch (e) {
-        console.error("[middleware] 补 storage 列失败(忽略):", e);
+        console.error("[middleware] 补列失败(忽略):", e);
       }
     }
     ready = true;

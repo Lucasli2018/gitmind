@@ -16,6 +16,7 @@ export async function onRequestGet({ request, env, params }) {
     map: {
       id: row.id, title: row.title, type: row.type, data,
       is_public: row.is_public, created_at: row.created_at, updated_at: row.updated_at,
+      size: row.size > 0 ? row.size : null,
       owner: !!(u && u.id === row.user_id),
     },
   });

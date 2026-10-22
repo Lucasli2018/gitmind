@@ -3,6 +3,12 @@
 // 自动降级到 D1 的 gm_maps.data 列，保证零数据丢失。
 const R2_KEY = (id) => `maps/${id}.json`;
 
+// UTF-8 字节数（用于列表页展示文件大小）
+function byteLen(str) {
+  try { return new TextEncoder().encode(str || "").length; }
+  catch (_) { return (str || "").length; }
+}
+
 // 写入：R2 优先（成功则标记 storage='r2'），无论 R2 是否成功都双写 D1 data 列作兜底。
 // 返回主存储位置 'r2' | 'd1'。
 export async function putMapData(env, id, dataStr) {
@@ -15,8 +21,8 @@ export async function putMapData(env, id, dataStr) {
       console.error("[store] R2 写入失败，已回退 D1 兜底:", e?.message || e);
     }
   }
-  await env.DB.prepare("UPDATE gm_maps SET data=?, storage=? WHERE id=?")
-    .bind(dataStr, r2ok ? "r2" : "d1", id).run();
+  await env.DB.prepare("UPDATE gm_maps SET data=?, storage=?, size=? WHERE id=?")
+    .bind(dataStr, r2ok ? "r2" : "d1", byteLen(dataStr), id).run();
   return r2ok ? "r2" : "d1";
 }
 
