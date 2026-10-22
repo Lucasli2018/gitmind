@@ -717,10 +717,10 @@ function wbOpacityLayerHtml(p) {
     `<input type="range" class="gm-ws-range" min="10" max="100" step="5" value="${Math.round(p.opacity * 100)}" />` +
     `<div class="gm-ws-t">图层</div>` +
     `<div class="gm-ws-row seg">` +
-      `<button class="gm-ws-seg" data-layer="front" title="置于顶层"><svg width="16" height="16"><path d="M8,1 L11,5 L5,5 Z" fill="#1f2a37"/><rect x="4" y="8" width="8" height="6" rx="1.5" fill="none" stroke="#1f2a37" stroke-width="1.6"/></svg></button>` +
-      `<button class="gm-ws-seg" data-layer="forward" title="上移一层"><svg width="16" height="16"><path d="M4,10 L8,5 L12,10" fill="none" stroke="#1f2a37" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="12" width="8" height="2.5" rx="1" fill="#1f2a37"/></svg></button>` +
-      `<button class="gm-ws-seg" data-layer="backward" title="下移一层"><svg width="16" height="16"><path d="M4,6 L8,11 L12,6" fill="none" stroke="#1f2a37" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="1.5" width="8" height="2.5" rx="1" fill="#1f2a37"/></svg></button>` +
-      `<button class="gm-ws-seg" data-layer="back" title="置于底层"><svg width="16" height="16"><rect x="4" y="2" width="8" height="6" rx="1.5" fill="none" stroke="#1f2a37" stroke-width="1.6"/><path d="M8,15 L5,11 L11,11 Z" fill="#1f2a37"/></svg></button>` +
+      `<button class="gm-ws-seg" data-layer="front" title="置于顶层"><svg width="16" height="16"><path d="M5,3.4 L8,1 L11,3.4" fill="none" stroke="#1f2a37" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M5,7 L8,4.6 L11,7" fill="none" stroke="#1f2a37" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="9.8" width="8" height="4.6" rx="1.2" fill="#1f2a37"/></svg></button>` +
+      `<button class="gm-ws-seg" data-layer="forward" title="上移一层"><svg width="16" height="16"><path d="M5,6.5 L8,4 L11,6.5" fill="none" stroke="#1f2a37" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="9.8" width="8" height="4.6" rx="1.2" fill="#1f2a37"/></svg></button>` +
+      `<button class="gm-ws-seg" data-layer="backward" title="下移一层"><svg width="16" height="16"><rect x="4" y="1.6" width="8" height="4.6" rx="1.2" fill="#1f2a37"/><path d="M5,9.5 L8,12 L11,9.5" fill="none" stroke="#1f2a37" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>` +
+      `<button class="gm-ws-seg" data-layer="back" title="置于底层"><svg width="16" height="16"><rect x="4" y="1.6" width="8" height="4.6" rx="1.2" fill="#1f2a37"/><path d="M5,8 L8,10.4 L11,8" fill="none" stroke="#1f2a37" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M5,11.6 L8,14 L11,11.6" fill="none" stroke="#1f2a37" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>` +
     `</div>`;
 }
 
@@ -728,10 +728,10 @@ function wbOpacityLayerHtml(p) {
 function wbActionsHtml() {
   return `<div class="gm-ws-t">操作</div>` +
     `<div class="gm-ws-row seg">` +
-      `<button class="gm-ws-seg" data-wact="dup" title="创建副本 (Ctrl+D)"><svg width="16" height="16"><rect x="3" y="3" width="8" height="8" rx="1.5" fill="none" stroke="#1f2a37" stroke-width="1.6"/><path d="M5,11 L11,11 L11,5" fill="none" stroke="#1f2a37" stroke-width="1.6"/></svg></button>` +
-      `<button class="gm-ws-seg" data-wact="del" title="删除 (Del)"><svg width="16" height="16"><path d="M4,5 L6,5 L7,3 L9,3 L10,5 L12,5 L12,7 L4,7 Z" fill="none" stroke="#1f2a37" stroke-width="1.6"/><line x1="5" y1="9" x2="11" y2="9" stroke="#1f2a37" stroke-width="1.6"/></svg></button>` +
-      `<button class="gm-ws-seg" data-wact="group" title="组合 (Ctrl+G)"><svg width="16" height="16"><rect x="3" y="3" width="5" height="5" rx="1" fill="none" stroke="#1f2a37" stroke-width="1.6"/><rect x="8" y="8" width="5" height="5" rx="1" fill="none" stroke="#1f2a37" stroke-width="1.6"/></svg></button>` +
-      `<button class="gm-ws-seg" data-wact="ungroup" title="解组 (Ctrl+Shift+G)"><svg width="16" height="16"><path d="M4,4 L8,8 M12,4 L8,8 M4,12 L8,8 M12,12 L8,8" stroke="#1f2a37" stroke-width="1.6"/></svg></button>` +
+      `<button class="gm-ws-seg" data-wact="dup" title="创建副本 (Ctrl+D)"><svg width="16" height="16"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="#1f2a37" stroke-width="1.5"/><path d="M10.5,2.5 L4.5,2.5 Q2.5,2.5 2.5,4.5 L2.5,10.5" fill="none" stroke="#1f2a37" stroke-width="1.5" stroke-linecap="round"/></svg></button>` +
+      `<button class="gm-ws-seg" data-wact="del" title="删除 (Del)"><svg width="16" height="16"><path d="M3,4.2 L13,4.2" stroke="#1f2a37" stroke-width="1.5" stroke-linecap="round"/><path d="M6.2,4.2 L6.2,3.2 Q6.2,2.5 6.9,2.5 L9.1,2.5 Q9.8,2.5 9.8,3.2 L9.8,4.2" fill="none" stroke="#1f2a37" stroke-width="1.4"/><path d="M4.4,4.2 L5.1,13.2 Q5.15,13.8 5.75,13.8 L10.25,13.8 Q10.85,13.8 10.9,13.2 L11.6,4.2" fill="none" stroke="#1f2a37" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.7,6.8 L6.7,11.2 M9.3,6.8 L9.3,11.2" stroke="#1f2a37" stroke-width="1.4" stroke-linecap="round"/></svg></button>` +
+      `<button class="gm-ws-seg" data-wact="group" title="组合 (Ctrl+G)"><svg width="16" height="16"><rect x="2.5" y="2.5" width="11" height="11" rx="2" fill="none" stroke="#1f2a37" stroke-width="1.3" stroke-dasharray="2.6 2.1"/><rect x="5" y="5" width="3.6" height="3.6" rx="0.8" fill="#1f2a37"/><rect x="7.4" y="7.4" width="3.6" height="3.6" rx="0.8" fill="#1f2a37"/></svg></button>` +
+      `<button class="gm-ws-seg" data-wact="ungroup" title="解组 (Ctrl+Shift+G)"><svg width="16" height="16"><rect x="2.5" y="2.5" width="11" height="11" rx="2" fill="none" stroke="#1f2a37" stroke-width="1.3" stroke-dasharray="2.6 2.1"/><rect x="4.2" y="4.2" width="3.4" height="3.4" rx="0.8" fill="#1f2a37"/><rect x="8.4" y="8.4" width="3.4" height="3.4" rx="0.8" fill="#1f2a37"/></svg></button>` +
     `</div>`;
 }
 

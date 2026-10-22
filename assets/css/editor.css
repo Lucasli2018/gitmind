@@ -122,6 +122,7 @@ body.gm-wb-mode #layoutPanel { display: none; }                /* 脑图专属�
 body.gm-wb-mode #layoutBtn,
 body.gm-wb-mode #outlineBtn { display: none; }
 body.gm-wb-mode .gm-right { display: none; }                  /* 右侧设置面板仅在思维导图展示 */
+body.gm-wb-mode .gm-side-rail { display: none; }              /* 右侧图标工具栏（属性/主题/结构/大纲/设置）同样仅思维导图展示 */
 
 /* 浮动工具栏（画布顶部居中） */
 .gm-wb-bar {
