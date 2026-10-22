@@ -132,6 +132,47 @@ body.gm-wb-mode #outlineBtn { display: none; }
 }
 .gm-wb-bar::-webkit-scrollbar { display: none; }
 .gm-wb-bar[hidden] { display: none; }
+
+/* 白板图形属性面板（左侧浮动，类 Excalidraw） */
+.gm-wb-style {
+  position: absolute; top: 68px; left: 14px; width: 190px; max-height: calc(100% - 90px);
+  overflow-y: auto; overflow-x: hidden; scrollbar-width: thin;
+  background: #fff; border: 1px solid #e8ecf1; border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(16,30,54,.12); z-index: 14; padding: 12px 12px 14px;
+}
+.gm-wb-style[hidden] { display: none; }
+.gm-ws-t {
+  font-size: 12px; font-weight: 700; color: #6b7686; margin: 10px 0 6px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.gm-ws-t:first-child { margin-top: 0; }
+.gm-ws-val { font-weight: 600; color: #9aa4b2; }
+.gm-ws-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.gm-ws-swatch {
+  width: 22px; height: 22px; border-radius: 7px; border: none; cursor: pointer;
+  padding: 0; position: relative; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08);
+}
+.gm-ws-swatch.active { outline: 2px solid #2f80ed; outline-offset: 1.5px; }
+.gm-ws-fill {
+  position: absolute; inset: 3px; border-radius: 4px; display: block;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.06);
+}
+/* 透明底棋盘格 */
+.gm-ws-swatch[data-v="transparent"] {
+  background: repeating-conic-gradient(#d5dbe3 0 25%, #fff 0 50%) 0 0 / 10px 10px;
+}
+.gm-ws-row.seg { gap: 4px; flex-wrap: nowrap; }
+.gm-ws-seg {
+  flex: 1 1 0; height: 30px; border: none; background: #f2f5f8; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+  transition: background .12s;
+}
+.gm-ws-seg:hover { background: #e8edf3; }
+.gm-ws-seg.active { background: #e3ecfd; box-shadow: inset 0 0 0 1.5px #2f80ed; }
+.gm-ws-range { width: 100%; accent-color: #2f80ed; height: 22px; margin: 0; cursor: pointer; }
+@media (max-width: 760px) {
+  .gm-wb-style { top: auto; bottom: 14px; left: 10px; width: 172px; max-height: 46%; }
+}
 .gm-wb-btn {
   position: relative; width: 38px; height: 38px; border: none; background: transparent;
   border-radius: 10px; color: #4b5563; display: flex; align-items: center; justify-content: center;

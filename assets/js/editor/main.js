@@ -167,6 +167,7 @@ function buildToolbar() {
   // 白板 / 流程图模式切换 body 类：隐藏左侧工具栏与脑图专属面板，启用顶部浮动工具栏
   document.body.classList.toggle("gm-wb-mode", mode === "whiteboard" || mode === "flowchart");
   if (wbBar) wbBar.hidden = !(mode === "whiteboard" || mode === "flowchart");
+  refreshWbStylePanel(); // 非白板模式会在函数内部自动隐藏属性面板
   if (mode === "mindmap") {
     addTool(bar, "plus", "子节点", () => { const sel = [...editor.selection][0]; if (sel) editor.addMindmapChild(sel); else ensureRoot(); });
     addTool(bar, "plus", "兄弟", () => { const sel = [...editor.selection][0]; if (sel) editor.addMindmapSibling(sel); });
@@ -250,9 +251,11 @@ function buildWbBar(bar) {
     s.title = c;
     s.addEventListener("click", () => {
       editor.toolColor = c;
+      editor.wbProps.stroke = c; // 与属性面板保持同步
       colors.querySelectorAll(".gm-wb-color").forEach((el) => el.classList.toggle("active", el === s));
       if (editor.tool === "select") editor.setTool("pen"); // 选色后自动切画笔
       refreshWbActive();
+      refreshWbStylePanel();
     });
     colors.appendChild(s);
   }
@@ -309,6 +312,61 @@ function refreshWbActive() {
   document.querySelectorAll("#wbBar .gm-wb-btn[data-tool]").forEach((b) => {
     b.classList.toggle("active", b.dataset.tool === editor.tool);
   });
+}
+
+// ---------- 白板图形属性面板（左侧浮动，类 Excalidraw） ----------
+// 背景色板（首项为透明）；描边色复用 WB_COLORS 与顶栏色板保持一致
+const WB_BG_COLORS = ["transparent", "#ffc9c9", "#b2f2bb", "#a5d8ff", "#ffec99", "#d0bfff", "#ffffff"];
+const WB_SHAPE_TOOLS = ["rect", "diamond", "ellipse", "arrow", "line", "pen", "text"];
+function refreshWbStylePanel() {
+  const panel = document.getElementById("wbStylePanel");
+  if (!panel || !editor || editor.mode !== "whiteboard") { if (panel) panel.hidden = true; return; }
+  // 图形/画笔工具激活或选中了图形时显示
+  const show = WB_SHAPE_TOOLS.includes(editor.tool) || editor.selection.size > 0;
+  panel.hidden = !show;
+  if (!show) return;
+  const p = editor.getWbProps();
+  const strokeSw = (c) => `<button class="gm-ws-swatch${c === p.stroke ? " active" : ""}" data-k="stroke" data-v="${c}" title="${c}" style="background:${c}"></button>`;
+  const fillSw = (c) => `<button class="gm-ws-swatch${c === p.fill ? " active" : ""}" data-k="fill" data-v="${c}" title="${c === "transparent" ? "透明" : c}"><span class="gm-ws-fill" style="background:${c}"></span></button>`;
+  const widthBtn = (v, lw) => `<button class="gm-ws-seg${p.strokeWidth === v ? " active" : ""}" data-k="strokeWidth" data-v="${v}" title="${v === 1 ? "细" : v === 2 ? "中" : "粗"}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="${lw}" stroke-linecap="round"/></svg></button>`;
+  const styleBtn = (v, t, dash) => `<button class="gm-ws-seg${p.strokeStyle === v ? " active" : ""}" data-k="strokeStyle" data-v="${v}" title="${t}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="2"${dash}/></svg></button>`;
+  const roughBtn = (v, t, d) => `<button class="gm-ws-seg${p.roughness === v ? " active" : ""}" data-k="roughness" data-v="${v}" title="${t}"><svg width="22" height="12"><path d="${d}" fill="none" stroke="#1f2a37" stroke-width="1.6" stroke-linecap="round"/></svg></button>`;
+  panel.innerHTML =
+    `<div class="gm-ws-t">描边</div>` +
+    `<div class="gm-ws-row">${WB_COLORS.map(strokeSw).join("")}</div>` +
+    `<div class="gm-ws-t">背景</div>` +
+    `<div class="gm-ws-row">${WB_BG_COLORS.map(fillSw).join("")}</div>` +
+    `<div class="gm-ws-t">描边宽度</div>` +
+    `<div class="gm-ws-row seg">${widthBtn(1, 1.5) + widthBtn(2, 3) + widthBtn(4, 4.5)}</div>` +
+    `<div class="gm-ws-t">边框样式</div>` +
+    `<div class="gm-ws-row seg">${styleBtn("solid", "实线", "") + styleBtn("dashed", "虚线", ' stroke-dasharray="5 3"') + styleBtn("dotted", "点线", ' stroke-dasharray="0.5 3.5" stroke-linecap="round"')}</div>` +
+    `<div class="gm-ws-t">线条风格</div>` +
+    `<div class="gm-ws-row seg">${roughBtn(0, "圆滑", "M2,6 L20,6") + roughBtn(1, "手绘", "M2,6 Q7,3 11,6 T20,5") + roughBtn(2, "随性", "M2,6 Q6,2 10,7 T14,4 T20,6")}</div>` +
+    `<div class="gm-ws-t">边角</div>` +
+    `<div class="gm-ws-row seg">` +
+      `<button class="gm-ws-seg${p.rounded ? " active" : ""}" data-k="rounded" data-v="true" title="圆角"><svg width="18" height="14"><path d="M3,13 L3,7 Q3,3 7,3 L13,3" fill="none" stroke="#1f2a37" stroke-width="2" stroke-linecap="round"/></svg></button>` +
+      `<button class="gm-ws-seg${!p.rounded ? " active" : ""}" data-k="rounded" data-v="false" title="直角"><svg width="18" height="14"><path d="M3,13 L3,3 L13,3" fill="none" stroke="#1f2a37" stroke-width="2" stroke-linecap="round"/></svg></button>` +
+    `</div>` +
+    `<div class="gm-ws-t">透明度 <span class="gm-ws-val">${Math.round(p.opacity * 100)}%</span></div>` +
+    `<input type="range" class="gm-ws-range" min="10" max="100" step="5" value="${Math.round(p.opacity * 100)}" />`;
+  // 属性修改事件（含透明度滑杆：拖动实时预览不记历史，松手落一次历史）
+  panel.querySelectorAll("[data-k]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const k = b.dataset.k, v = b.dataset.v;
+      const val = k === "rounded" ? v === "true" : (k === "strokeWidth" || k === "roughness") ? Number(v) : v;
+      editor.setWbProps({ [k]: val });
+      refreshWbStylePanel();
+      if (k === "stroke") refreshWbActive(); // 同步顶栏色板高亮
+    });
+  });
+  const range = panel.querySelector(".gm-ws-range");
+  if (range) {
+    range.addEventListener("input", () => {
+      panel.querySelector(".gm-ws-val").textContent = range.value + "%";
+      editor.setWbProps({ opacity: Number(range.value) / 100 }, false);
+    });
+    range.addEventListener("change", () => editor.setWbProps({ opacity: Number(range.value) / 100 }, true));
+  }
 }
 
 // 帮助面板按模式显示对应快捷键
@@ -519,7 +577,7 @@ function wireKeys() {
   document.getElementById("titleInput").value = map.title || "未命名导图";
   document.getElementById("shareBtn").textContent = map.is_public ? "已分享" : "分享";
 
-  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => refreshWbActive(), mode: map.type || "mindmap" });
+  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), mode: map.type || "mindmap" });
   editor.load(map.data);
   dirty = false; // 初始加载触发的 onChange 不算脏，避免无谓落盘
   lastSavedAt = map.updated_at || Date.now();

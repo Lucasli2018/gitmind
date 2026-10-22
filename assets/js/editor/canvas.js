@@ -20,6 +20,9 @@ export class Editor {
     this._pinch = null;
     // 白板扩展状态：图形拖拽创建 / 橡皮 / 激光笔 / 当前描边色
     this.toolColor = "#1f2a37";
+    // 白板图形默认属性（属性面板数据源）：描边/背景/宽度/边框样式/线条风格/边角/透明度
+    this.wbProps = { stroke: "#1f2a37", fill: "#ffffff", strokeWidth: 2, strokeStyle: "solid", roughness: 0, rounded: true, opacity: 1 };
+    this._onSelectionChange = opts.onSelectionChange || null;
     this._newShape = null; this._erasing = false; this._laser = null; this._laserRaf = null;
     this._marquee = null; this._laserDown = false;
     this._onToolChange = opts.onToolChange || null;
@@ -212,18 +215,86 @@ export class Editor {
 
     this.vp.innerHTML = html;
     this.vp.setAttribute("transform", `translate(${this.view.x},${this.view.y}) scale(${this.view.scale})`);
+    // 工具或选择集变化时通知 UI（属性面板刷新可见性/取值），签名去重避免高频 DOM 操作
+    const sig = this.mode + "|" + this.tool + "|" + [...this.selection].sort().join(",");
+    if (sig !== this._lastUiSig) { this._lastUiSig = sig; if (this._onSelectionChange) this._onSelectionChange(); }
+  }
+
+  // ---------- 白板图形属性辅助 ----------
+  // 描边属性片段（宽度 / 边框样式：实线|虚线|点线）。baseCap：非点线时的 linecap 回退。
+  _wbStrokeAttrs(n, baseCap) {
+    const w = n.strokeWidth || 2;
+    let s = `stroke-width="${w}"`;
+    if (n.strokeStyle === "dashed") s += ` stroke-dasharray="${(7 + w * 2).toFixed(1)} ${(5 + w * 2).toFixed(1)}"`;
+    else if (n.strokeStyle === "dotted") s += ` stroke-dasharray="${Math.max(0.1, w * 0.5).toFixed(2)} ${(w * 2.2).toFixed(1)}" stroke-linecap="round"`;
+    else if (baseCap) s += ` stroke-linecap="${baseCap}"`;
+    return s;
+  }
+  // 由节点 id 生成稳定随机种子（同一节点每次渲染抖动一致）
+  _seed(id) {
+    let h = 0;
+    for (let i = 0; i < (id || "").length; i++) h = (h * 31 + id.charCodeAt(i)) & 0x7fffffff;
+    return h || 1;
+  }
+  _mkRnd(seed) {
+    let s = seed || 1;
+    return () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return (s / 0x7fffffff) * 2 - 1; };
+  }
+  // 手绘风多边形/折线路径：每边插入抖动中点（closed=false 用于直线/箭头）
+  _roughPoly(corners, seed, amp, closed = true) {
+    const rnd = this._mkRnd(seed);
+    const pts = [];
+    const n = corners.length;
+    for (let i = 0; i < n; i++) {
+      const a = corners[i], b = corners[(i + 1) % n];
+      pts.push({ x: a.x + rnd() * amp * 0.6, y: a.y + rnd() * amp * 0.6 });
+      if (closed || i < n - 1) pts.push({ x: (a.x + b.x) / 2 + rnd() * amp, y: (a.y + b.y) / 2 + rnd() * amp });
+    }
+    if (!closed) pts.push({ x: corners[n - 1].x + rnd() * amp * 0.6, y: corners[n - 1].y + rnd() * amp * 0.6 });
+    return "M " + pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" L ") + (closed ? " Z" : "");
+  }
+  // 手绘风椭圆：圆周采样 + 径向抖动 + 二次贝塞尔平滑闭合
+  _roughEllipse(w, h, seed, amp) {
+    const rnd = this._mkRnd(seed);
+    const N = 14, pts = [];
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      const jr = 1 + rnd() * (amp / Math.max(w, h)) * 2.2;
+      pts.push({ x: w / 2 + Math.cos(a) * (w / 2) * jr, y: h / 2 + Math.sin(a) * (h / 2) * jr });
+    }
+    let d = `M ${((pts[N - 1].x + pts[0].x) / 2).toFixed(1)},${((pts[N - 1].y + pts[0].y) / 2).toFixed(1)}`;
+    for (let i = 0; i < N; i++) {
+      const p = pts[i], q = pts[(i + 1) % N];
+      d += ` Q ${p.x.toFixed(1)},${p.y.toFixed(1)} ${((p.x + q.x) / 2).toFixed(1)},${((p.y + q.y) / 2).toFixed(1)}`;
+    }
+    return d + " Z";
   }
 
   shapeHTML(n, s) {
     const { w, h } = s;
-    const fill = n.color || "#fff";
+    const fill = (n.color === undefined || n.color === null) ? "#fff" : n.color;
     const stroke = n.stroke || "#94a3b8";
+    const sw = n.strokeWidth || 2;
+    const sa = this._wbStrokeAttrs(n);
+    const amp = n.roughness ? n.roughness * 1.6 : 0;
+    const seed = this._seed(n.id);
     switch (n.shape) {
-      case "rect": return `<rect x="0" y="0" width="${w}" height="${h}" rx="3" fill="${fill}" stroke="${stroke}" stroke-width="2"/>`;
-      case "diamond": return `<polygon points="${w / 2},0 ${w},${h / 2} ${w / 2},${h} 0,${h / 2}" fill="${fill}" stroke="${stroke}" stroke-width="2"/>`;
-      case "ellipse": return `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2}" ry="${h / 2}" fill="${fill}" stroke="${stroke}" stroke-width="2"/>`;
-      case "parallelogram": return `<polygon points="18,0 ${w},0 ${w - 18},${h} 0,${h}" fill="${fill}" stroke="${stroke}" stroke-width="2"/>`;
-      case "sticky": return `<g filter="url(#gm-shadow)"><rect x="0" y="0" width="${w}" height="${h}" rx="6" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/></g>`;
+      case "rect": {
+        if (amp) return `<path d="${this._roughPoly([{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }], seed, amp)}" fill="${fill}" stroke="${stroke}" ${sa}/>`;
+        const rx = n.rounded === false ? 0 : 3;
+        return `<rect x="0" y="0" width="${w}" height="${h}" rx="${rx}" fill="${fill}" stroke="${stroke}" ${sa}/>`;
+      }
+      case "diamond": {
+        const c = [{ x: w / 2, y: 0 }, { x: w, y: h / 2 }, { x: w / 2, y: h }, { x: 0, y: h / 2 }];
+        if (amp) return `<path d="${this._roughPoly(c, seed, amp)}" fill="${fill}" stroke="${stroke}" ${sa}/>`;
+        return `<polygon points="${w / 2},0 ${w},${h / 2} ${w / 2},${h} 0,${h / 2}" fill="${fill}" stroke="${stroke}" ${sa}/>`;
+      }
+      case "ellipse": {
+        if (amp) return `<path d="${this._roughEllipse(w, h, seed, amp)}" fill="${fill}" stroke="${stroke}" ${sa}/>`;
+        return `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2}" ry="${h / 2}" fill="${fill}" stroke="${stroke}" ${sa}/>`;
+      }
+      case "parallelogram": return `<polygon points="18,0 ${w},0 ${w - 18},${h} 0,${h}" fill="${fill}" stroke="${stroke}" ${sa}/>`;
+      case "sticky": return `<g filter="url(#gm-shadow)"><rect x="0" y="0" width="${w}" height="${h}" rx="6" fill="${fill}" stroke="${stroke}" ${this._wbStrokeAttrs({ ...n, strokeWidth: n.strokeWidth || 1.5 })}/></g>`;
       case "text": return ``;
       case "frame": return (
         `<rect x="0" y="0" width="${w}" height="${h}" rx="8" fill="none" stroke="#aab3bf" stroke-width="1.5" stroke-dasharray="8 6"/>` +
@@ -233,7 +304,8 @@ export class Editor {
       case "line": {
         // w / h 为相对起点的增量（可为负），画在本地坐标系 (0,0) -> (w,h)
         const arrow = n.shape === "arrow" ? ` marker-end="url(#gm-arrow)"` : "";
-        return `<path d="M 0,0 L ${n.w},${n.h}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round"${arrow}/>`;
+        const d = amp ? this._roughPoly([{ x: 0, y: 0 }, { x: n.w, y: n.h }], seed, amp, false) : `M 0,0 L ${n.w},${n.h}`;
+        return `<path d="${d}" fill="none" stroke="${stroke}" ${sa} stroke-linejoin="round"${arrow}/>`;
       }
       case "image": return `<image href="${n.src || ""}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none"/>`;
       case "embed": {
@@ -252,7 +324,10 @@ export class Editor {
         return out;
       }
       case "rounded":
-      default: return `<rect x="0" y="0" width="${w}" height="${h}" rx="12" fill="${fill}" stroke="${stroke}" stroke-width="2"/>`;
+      default: {
+        if (amp) return `<path d="${this._roughPoly([{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }], seed, amp)}" fill="${fill}" stroke="${stroke}" ${sa}/>`;
+        return `<rect x="0" y="0" width="${w}" height="${h}" rx="12" fill="${fill}" stroke="${stroke}" ${sa}/>`;
+      }
     }
   }
 
@@ -285,7 +360,8 @@ export class Editor {
       const ports = [["top", w / 2, 0], ["bottom", w / 2, h], ["left", 0, h / 2], ["right", w, h / 2]];
       for (const [p, px, py] of ports) inner += `<circle class="gm-port" data-id="${n.id}" data-port="${p}" cx="${px}" cy="${py}" r="6" fill="#fff" stroke="#11b5a4" stroke-width="2"/>`;
     }
-    return `<g class="gm-node${selected ? " sel" : ""}" data-id="${n.id}" transform="translate(${n.x},${n.y})">${inner}</g>`;
+    const op = n.opacity != null && n.opacity < 1 ? ` opacity="${n.opacity}"` : "";
+    return `<g class="gm-node${selected ? " sel" : ""}" data-id="${n.id}" transform="translate(${n.x},${n.y})"${op}>${inner}</g>`;
   }
 
   edgeHTML(e) {
@@ -456,7 +532,7 @@ export class Editor {
           this._pan = { sx, sy, ox: this.view.x, oy: this.view.y };
           return;
         case "pen": {
-          this._stroke = { id: newId(), points: [{ x: w.x, y: w.y }], color: this.toolColor, width: 3 };
+          this._stroke = { id: newId(), points: [{ x: w.x, y: w.y }], color: this.toolColor, width: Math.max(1.5, (this.wbProps.strokeWidth || 2) * 1.5) };
           return;
         }
         case "laser":
@@ -725,6 +801,47 @@ export class Editor {
     if (this._onToolChange) this._onToolChange(tool); // 通知工具栏刷新高亮
   }
 
+  // ---------- 白板属性面板 ----------
+  // 应用属性：写入默认 wbProps（影响后续新建图形），并同步到当前选中的节点
+  setWbProps(patch, useHistory = true) {
+    Object.assign(this.wbProps, patch);
+    if ("stroke" in patch) this.toolColor = patch.stroke;
+    const sel = [...this.selection];
+    if (!sel.length) return;
+    for (const id of sel) {
+      const n = this.nodeById(id);
+      if (!n || n.shape === "frame" || n.shape === "embed" || n.shape === "image") continue;
+      if ("stroke" in patch && n.shape !== "sticky") n.stroke = patch.stroke;
+      if ("fill" in patch && n.shape !== "arrow" && n.shape !== "line" && n.shape !== "text") n.color = patch.fill;
+      if ("strokeWidth" in patch) n.strokeWidth = patch.strokeWidth;
+      if ("strokeStyle" in patch) n.strokeStyle = patch.strokeStyle;
+      if ("roughness" in patch) n.roughness = patch.roughness;
+      if ("rounded" in patch && n.shape === "rect") n.rounded = patch.rounded;
+      if ("opacity" in patch) n.opacity = patch.opacity;
+    }
+    this.render();
+    this.onChange();
+    if (useHistory) this.pushHistory();
+  }
+  // 面板取值：单选时读节点属性，否则读默认 wbProps
+  getWbProps() {
+    const sel = [...this.selection].map((id) => this.nodeById(id)).filter(Boolean)
+      .filter((n) => n.shape !== "frame" && n.shape !== "embed" && n.shape !== "image");
+    if (sel.length === 1) {
+      const n = sel[0];
+      return {
+        stroke: n.stroke || this.wbProps.stroke,
+        fill: n.color == null ? "#ffffff" : n.color,
+        strokeWidth: n.strokeWidth || 2,
+        strokeStyle: n.strokeStyle || "solid",
+        roughness: n.roughness || 0,
+        rounded: n.rounded !== false,
+        opacity: n.opacity == null ? 1 : n.opacity,
+      };
+    }
+    return { ...this.wbProps };
+  }
+
   // ===================== 白板扩展 =====================
 
   // 结束拖拽，创建图形（拖动距离过小则用默认尺寸）
@@ -735,10 +852,13 @@ export class Editor {
     const dx = t.x1 - t.x0, dy = t.y1 - t.y0;
     const tiny = Math.hypot(dx, dy) < 8;
     const color = this.toolColor;
+    // 面板当前属性带入新节点
+    const P = this.wbProps;
+    const styleProps = { strokeWidth: P.strokeWidth, strokeStyle: P.strokeStyle, roughness: P.roughness, opacity: P.opacity };
     let node;
     if (t.tool === "arrow" || t.tool === "line") {
       const w = tiny ? 180 : dx, h = tiny ? 0 : dy;
-      node = { id: newId(), shape: t.tool, x: t.x0, y: t.y0, w, h, text: "", color: "transparent", textColor: "#1f2a37", stroke: color, fontSize: 14, parentId: null, collapsed: false };
+      node = { id: newId(), shape: t.tool, x: t.x0, y: t.y0, w, h, text: "", color: "transparent", textColor: "#1f2a37", stroke: color, fontSize: 14, parentId: null, collapsed: false, ...styleProps };
     } else if (t.tool === "frame") {
       const w = tiny ? 360 : Math.abs(dx), h = tiny ? 260 : Math.abs(dy);
       const x = tiny ? t.x0 - w / 2 : Math.min(t.x0, t.x1);
@@ -750,7 +870,7 @@ export class Editor {
       const w = tiny ? dw : Math.abs(dx), h = tiny ? dh : Math.abs(dy);
       const x = tiny ? t.x0 - w / 2 : Math.min(t.x0, t.x1);
       const y = tiny ? t.y0 - h / 2 : Math.min(t.y0, t.y1);
-      node = { id: newId(), shape: t.tool, x, y, w, h, text: "", color: "#fff", textColor: "#1f2a37", stroke: color, fontSize: 15, parentId: null, collapsed: false };
+      node = { id: newId(), shape: t.tool, x, y, w, h, text: "", color: P.fill || "#fff", textColor: "#1f2a37", stroke: color, fontSize: 15, parentId: null, collapsed: false, rounded: P.rounded, ...styleProps };
     }
     this.doc.nodes.push(node);
     this.selection = new Set([node.id]);
