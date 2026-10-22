@@ -18,6 +18,9 @@ export class Editor {
     this.sizes = new Map();
     this._drag = null; this._pan = null; this._connect = null; this._stroke = null;
     this._pinch = null;
+    // 白板扩展状态：图形拖拽创建 / 橡皮 / 激光笔 / 当前描边色
+    this.toolColor = "#1f2a37";
+    this._newShape = null; this._erasing = false; this._laser = null; this._laserRaf = null;
     // 撤销/重做历史栈（快照式，仅存数据不含视图）
     this._history = []; this._hidx = -1; this._restoring = false;
     this._updateUndoRedoButtons = opts.onUndoRedoState || null;
@@ -64,6 +67,7 @@ export class Editor {
     };
     // 进入双指模式，放弃单指已开始的操作，避免冲突
     this._drag = null; this._pan = null; this._connect = null; this._stroke = null;
+    this._newShape = null; this._erasing = false;
   }
   onTouchMove(e) {
     if (!this._pinch || e.touches.length !== 2) return;
@@ -193,10 +197,14 @@ export class Editor {
     // 自由画笔
     for (const s of this.doc.strokes) html += this.strokeHTML(s);
     if (this._stroke) html += this.strokeHTML(this._stroke);
+    // 白板：拖拽创建中的临时图形
+    if (this._newShape) html += this.tempShapeHTML();
     // 节点
     for (const n of this.doc.nodes) html += this.nodeHTML(n, this.selection.has(n.id));
     // 临时连线
     if (this._connect) html += this.tempConnectHTML();
+    // 白板：激光笔轨迹（最上层，不持久化）
+    if (this._laser && this._laser.pts.length > 1) html += this.laserHTML();
 
     this.vp.innerHTML = html;
     this.vp.setAttribute("transform", `translate(${this.view.x},${this.view.y}) scale(${this.view.scale})`);
@@ -213,26 +221,59 @@ export class Editor {
       case "parallelogram": return `<polygon points="18,0 ${w},0 ${w - 18},${h} 0,${h}" fill="${fill}" stroke="${stroke}" stroke-width="2"/>`;
       case "sticky": return `<g filter="url(#gm-shadow)"><rect x="0" y="0" width="${w}" height="${h}" rx="6" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/></g>`;
       case "text": return ``;
+      case "frame": return (
+        `<rect x="0" y="0" width="${w}" height="${h}" rx="8" fill="none" stroke="#aab3bf" stroke-width="1.5" stroke-dasharray="8 6"/>` +
+        `<text x="2" y="-9" font-size="14" font-weight="600" fill="#8a94a6" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(n.text || "")}</text>`
+      );
+      case "arrow":
+      case "line": {
+        // w / h 为相对起点的增量（可为负），画在本地坐标系 (0,0) -> (w,h)
+        const arrow = n.shape === "arrow" ? ` marker-end="url(#gm-arrow)"` : "";
+        return `<path d="M 0,0 L ${n.w},${n.h}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round"${arrow}/>`;
+      }
+      case "image": return `<image href="${n.src || ""}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none"/>`;
+      case "embed": {
+        // 底框始终绘制（导出 PNG/SVG 时 iframe 不可渲染，仍有边框提示）
+        let out = `<rect x="0" y="0" width="${w}" height="${h}" rx="10" fill="#fff" stroke="#aab3bf" stroke-width="1.5"/>` +
+          `<rect x="0" y="0" width="${w}" height="26" rx="10" fill="#f2f5f8" stroke="#aab3bf" stroke-width="1.5"/>` +
+          `<text x="10" y="17" font-size="12" fill="#64748b" font-family='-apple-system,"PingFang SC",sans-serif'>${escapeXml(this._shortUrl(n.url))}</text>`;
+        if (!this._forExport) {
+          out += `<foreignObject x="0" y="26" width="${w}" height="${h - 26}">` +
+            `<div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;">` +
+            `<iframe src="${escapeXml(n.url || "")}" style="width:100%;height:100%;border:0;" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>` +
+            `</div></foreignObject>` +
+            // 透明遮罩：拦截 iframe 事件，保证节点可选中 / 可拖动
+            `<rect x="0" y="0" width="${w}" height="${h}" fill="transparent"/>`;
+        }
+        return out;
+      }
       case "rounded":
       default: return `<rect x="0" y="0" width="${w}" height="${h}" rx="12" fill="${fill}" stroke="${stroke}" stroke-width="2"/>`;
     }
+  }
+
+  _shortUrl(u) {
+    try { return new URL(u).hostname; } catch (_) { return u || "网页"; }
   }
 
   nodeHTML(n, selected) {
     const s = this.sizes.get(n.id) || sizeOf(n, this.doc.type);
     const { w, h, lines } = s;
     let inner = this.shapeHTML(n, s);
-    // 文本
-    const fs = n.fontSize || 15;
-    const LH = fs + 7;
-    const totalH = lines.length * LH;
-    let startY = h / 2 - totalH / 2 + LH / 2;
-    let tspans = "";
-    lines.forEach((ln, i) => {
-      tspans += `<tspan x="${w / 2}" y="${(startY + i * LH).toFixed(1)}">${escapeXml(ln) || " "}</tspan>`;
-    });
-    const tcolor = n.textColor || "#1f2a37";
-    inner += `<text x="${w / 2}" y="${h / 2}" text-anchor="middle" font-size="${fs}" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif' fill="${tcolor}" font-weight="${n.shape === "text" ? 600 : 500}">${tspans}</text>`;
+    // 文本（箭头/直线/图片/嵌入网页/画框标签已自绘，跳过居中文本）
+    const TEXTLESS = ["arrow", "line", "image", "embed", "frame"];
+    if (!TEXTLESS.includes(n.shape)) {
+      const fs = n.fontSize || 15;
+      const LH = fs + 7;
+      const totalH = lines.length * LH;
+      let startY = h / 2 - totalH / 2 + LH / 2;
+      let tspans = "";
+      lines.forEach((ln, i) => {
+        tspans += `<tspan x="${w / 2}" y="${(startY + i * LH).toFixed(1)}">${escapeXml(ln) || " "}</tspan>`;
+      });
+      const tcolor = n.textColor || "#1f2a37";
+      inner += `<text x="${w / 2}" y="${h / 2}" text-anchor="middle" font-size="${fs}" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif' fill="${tcolor}" font-weight="${n.shape === "text" ? 600 : 500}">${tspans}</text>`;
+    }
     // 选中框
     if (selected) inner += `<rect x="-5" y="-5" width="${w + 10}" height="${h + 10}" rx="14" fill="none" stroke="#11b5a4" stroke-width="2" stroke-dasharray="6 4"/>`;
     // 流程图连线端口
@@ -349,12 +390,21 @@ export class Editor {
     this.view.y = (r.height - b.h * scale) / 2 - b.y * scale;
     this.render();
   }
+  // 节点包围盒（箭头 / 直线的 w、h 是增量，可能为负）
+  nodeBBox(n) {
+    const s = this.sizes.get(n.id) || sizeOf(n, this.doc.type);
+    if (n.shape === "arrow" || n.shape === "line") {
+      return { x: Math.min(n.x, n.x + (n.w || 0)), y: Math.min(n.y, n.y + (n.h || 0)), w: Math.max(2, Math.abs(n.w || 0)), h: Math.max(2, Math.abs(n.h || 0)) };
+    }
+    return { x: n.x, y: n.y, w: s.w, h: s.h };
+  }
+
   getBounds() {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const n of this.doc.nodes) {
-      const s = this.sizes.get(n.id); if (!s) continue;
-      minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
-      maxX = Math.max(maxX, n.x + s.w); maxY = Math.max(maxY, n.y + s.h);
+      const b = this.nodeBBox(n); if (!b) continue;
+      minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
+      maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
     }
     for (const st of this.doc.strokes) for (const p of st.points || []) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
     if (minX === Infinity) return null;
@@ -375,10 +425,37 @@ export class Editor {
       return;
     }
 
-    if (this.mode === "whiteboard" && this.tool === "pen") {
+    // ---------- 白板各工具 ----------
+    if (this.mode === "whiteboard") {
       const w = this.toWorld(e.clientX, e.clientY);
-      this._stroke = { id: newId(), points: [{ x: w.x, y: w.y }], color: this.toolColor || "#1f2a37", width: 3 };
-      return;
+      switch (this.tool) {
+        case "hand":
+          this._pan = { sx, sy, ox: this.view.x, oy: this.view.y };
+          return;
+        case "pen": {
+          this._stroke = { id: newId(), points: [{ x: w.x, y: w.y }], color: this.toolColor, width: 3 };
+          return;
+        }
+        case "laser":
+          this._laser = { pts: [{ x: w.x, y: w.y, t: performance.now() }] };
+          this._startLaserLoop();
+          return;
+        case "eraser":
+          this._erasing = true;
+          this._erased = false;
+          this.eraseAt(w);
+          return;
+        case "text":
+          this.addTextNode(w.x, w.y);
+          return;
+        case "image":
+          return; // 图片由 main.js 通过文件选择器插入
+        case "select":
+          break; // 走下方通用选择 / 拖拽逻辑
+        default: // frame / rect / diamond / ellipse / arrow / line：拖拽创建
+          this._newShape = { tool: this.tool, x0: w.x, y0: w.y, x1: w.x, y1: w.y };
+          return;
+      }
     }
 
     const portEl = target.closest && target.closest(".gm-port");
@@ -409,6 +486,27 @@ export class Editor {
       this.render();
       return;
     }
+    if (this._newShape) {
+      const w = this.toWorld(e.clientX, e.clientY);
+      this._newShape.x1 = w.x; this._newShape.y1 = w.y;
+      // Shift 吸附：箭头 / 直线按 45° 角
+      if ((this._newShape.tool === "arrow" || this._newShape.tool === "line") && e.shiftKey) {
+        const dx = w.x - this._newShape.x0, dy = w.y - this._newShape.y0;
+        const ang = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+        const len = Math.hypot(dx, dy);
+        this._newShape.x1 = this._newShape.x0 + Math.cos(ang) * len;
+        this._newShape.y1 = this._newShape.y0 + Math.sin(ang) * len;
+      }
+      this.render();
+      return;
+    }
+    if (this._erasing) { this.eraseAt(this.toWorld(e.clientX, e.clientY)); return; }
+    if (this._laser) {
+      this._laser.pts.push({ x: this.toWorld(e.clientX, e.clientY).x, y: this.toWorld(e.clientX, e.clientY).y, t: performance.now() });
+      this._startLaserLoop();
+      this.render();
+      return;
+    }
     if (this._connect) { this._connect.cx = e.clientX; this._connect.cy = e.clientY; this.render(); return; }
     if (this._drag) {
       const r = this.rect();
@@ -431,6 +529,9 @@ export class Editor {
   }
 
   onUp(e) {
+    if (this._newShape) { this.finishNewShape(); return; }
+    if (this._erasing) { this._erasing = false; if (this._erased) { this.onChange(); this.pushHistory(); } this._erased = false; return; }
+    if (this._laser) { this._startLaserLoop(); return; } // 轨迹交给淡出循环清理
     if (this._stroke) {
       if (this._stroke.points.length > 1) this.doc.strokes.push(this._stroke);
       this._stroke = null; this.render(); this.onChange(); this.pushHistory(); return;
@@ -448,7 +549,15 @@ export class Editor {
   onDblClick(e) {
     if (this.readOnly) return;
     const hitEl = e.target.closest && e.target.closest("[data-id]");
-    if (hitEl) this.beginTextEdit(hitEl.getAttribute("data-id"));
+    if (!hitEl) return;
+    const n = this.nodeById(hitEl.getAttribute("data-id"));
+    if (!n) return;
+    if (n.shape === "embed") {
+      const url = prompt("输入要嵌入的网页地址", n.url || "https://");
+      if (url && url !== n.url) { n.url = url.trim(); this.render(); this.onChange(); this.pushHistory(); }
+      return;
+    }
+    this.beginTextEdit(n.id);
   }
 
   getMovable(set) {
@@ -560,7 +669,167 @@ export class Editor {
     return id;
   }
 
-  setTool(tool) { this.tool = tool; if (tool === "select") this.container.style.cursor = "default"; else this.container.style.cursor = "crosshair"; }
+  setTool(tool) {
+    this.tool = tool;
+    if (tool === "select" || tool === "hand") this.container.style.cursor = "default";
+    else if (tool === "laser") this.container.style.cursor = "crosshair";
+    else this.container.style.cursor = "crosshair";
+    if (tool !== "laser") this._laser = null;
+  }
+
+  // ===================== 白板扩展 =====================
+
+  // 结束拖拽，创建图形（拖动距离过小则用默认尺寸）
+  finishNewShape() {
+    const t = this._newShape;
+    this._newShape = null;
+    if (!t) return;
+    const dx = t.x1 - t.x0, dy = t.y1 - t.y0;
+    const tiny = Math.hypot(dx, dy) < 8;
+    const color = this.toolColor;
+    let node;
+    if (t.tool === "arrow" || t.tool === "line") {
+      const w = tiny ? 180 : dx, h = tiny ? 0 : dy;
+      node = { id: newId(), shape: t.tool, x: t.x0, y: t.y0, w, h, text: "", color: "transparent", textColor: "#1f2a37", stroke: color, fontSize: 14, parentId: null, collapsed: false };
+    } else if (t.tool === "frame") {
+      const w = tiny ? 360 : Math.abs(dx), h = tiny ? 260 : Math.abs(dy);
+      const x = tiny ? t.x0 - w / 2 : Math.min(t.x0, t.x1);
+      const y = tiny ? t.y0 - h / 2 : Math.min(t.y0, t.y1);
+      node = { id: newId(), shape: "frame", x, y, w, h, text: this._nextFrameName(), color: "transparent", textColor: "#8a94a6", stroke: "#aab3bf", fontSize: 14, parentId: null, collapsed: false };
+    } else {
+      const defs = { rect: [140, 100], diamond: [160, 110], ellipse: [140, 100] };
+      const [dw, dh] = defs[t.tool] || [140, 100];
+      const w = tiny ? dw : Math.abs(dx), h = tiny ? dh : Math.abs(dy);
+      const x = tiny ? t.x0 - w / 2 : Math.min(t.x0, t.x1);
+      const y = tiny ? t.y0 - h / 2 : Math.min(t.y0, t.y1);
+      node = { id: newId(), shape: t.tool, x, y, w, h, text: "", color: "#fff", textColor: "#1f2a37", stroke: color, fontSize: 15, parentId: null, collapsed: false };
+    }
+    this.doc.nodes.push(node);
+    this.selection = new Set([node.id]);
+    this.render();
+    this.onChange();
+    this.pushHistory();
+    // 基础图形创建后直接进入文字编辑，画框不进入
+    if (["rect", "diamond", "ellipse"].includes(t.tool)) this.beginTextEdit(node.id);
+  }
+
+  _nextFrameName() {
+    const n = this.doc.nodes.filter((x) => x.shape === "frame").length + 1;
+    return `Frame ${n}`;
+  }
+
+  // 拖拽创建中的虚线预览
+  tempShapeHTML() {
+    const t = this._newShape;
+    const x = Math.min(t.x0, t.x1), y = Math.min(t.y0, t.y1);
+    const w = Math.abs(t.x1 - t.x0), h = Math.abs(t.y1 - t.y0);
+    const dash = `fill="none" stroke="${this.toolColor}" stroke-width="2" stroke-dasharray="6 4" opacity="0.8"`;
+    switch (t.tool) {
+      case "frame": return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="8" ${dash}/>`;
+      case "rect": return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" ${dash}/>`;
+      case "diamond": return `<polygon points="${x + w / 2},${y} ${x + w},${y + h / 2} ${x + w / 2},${y + h} ${x},${y + h / 2}" ${dash}/>`;
+      case "ellipse": return `<ellipse cx="${x + w / 2}" cy="${y + h / 2}" rx="${w / 2}" ry="${h / 2}" ${dash}/>`;
+      case "arrow": return `<path d="M ${t.x0},${t.y0} L ${t.x1},${t.y1}" fill="none" stroke="${this.toolColor}" stroke-width="2" stroke-dasharray="6 4" opacity="0.8" marker-end="url(#gm-arrow)"/>`;
+      case "line": return `<path d="M ${t.x0},${t.y0} L ${t.x1},${t.y1}" fill="none" stroke="${this.toolColor}" stroke-width="2" stroke-dasharray="6 4" opacity="0.8"/>`;
+      default: return "";
+    }
+  }
+
+  // ---------- 橡皮 ----------
+  eraseAt(w) {
+    const tol = 6 / this.view.scale;
+    // 命中笔画：点到各线段距离
+    const strokeHit = (s) => (s.points || []).some((p) => Math.hypot(p.x - w.x, p.y - w.y) <= tol + (s.width || 3) / 2);
+    // 命中节点：包围盒外扩容差
+    const nodeHit = (n) => {
+      const b = this.nodeBBox(n);
+      return w.x >= b.x - tol && w.x <= b.x + b.w + tol && w.y >= b.y - tol && w.y <= b.y + b.h + tol;
+    };
+    const before = { nodes: this.doc.nodes.length, strokes: this.doc.strokes.length };
+    this.doc.strokes = this.doc.strokes.filter((s) => !strokeHit(s));
+    const hit = this.doc.nodes.find(nodeHit);
+    if (hit) {
+      this.doc.nodes = this.doc.nodes.filter((n) => n.id !== hit.id);
+      this.selection.delete(hit.id);
+      this.doc.edges = this.doc.edges.filter((ed) => ed.from !== hit.id && ed.to !== hit.id);
+    }
+    if (this.doc.nodes.length !== before.nodes || this.doc.strokes.length !== before.strokes) {
+      this._erased = true;
+      this.render();
+    }
+  }
+
+  // ---------- 激光笔 ----------
+  laserHTML() {
+    const now = performance.now();
+    const LIFE = 900;
+    const pts = this._laser.pts.filter((p) => now - p.t < LIFE);
+    this._laser.pts = pts;
+    let out = "";
+    for (let i = 1; i < pts.length; i++) {
+      const age = (now - pts[i].t) / LIFE;
+      out += `<path d="M ${pts[i - 1].x},${pts[i - 1].y} L ${pts[i].x},${pts[i].y}" fill="none" stroke="#e5484d" stroke-width="3.5" stroke-linecap="round" opacity="${(1 - age).toFixed(2)}"/>`;
+    }
+    const last = pts[pts.length - 1];
+    if (last) {
+      const age = (now - last.t) / LIFE;
+      out += `<circle cx="${last.x}" cy="${last.y}" r="5" fill="#e5484d" opacity="${(1 - age).toFixed(2)}"/>`;
+    }
+    return out;
+  }
+  _startLaserLoop() {
+    if (this._laserRaf) return;
+    const tick = () => {
+      if (!this._laser || !this._laser.pts.length) { this._laserRaf = null; return; }
+      const now = performance.now();
+      if (this._laser.pts.some((p) => now - p.t < 900)) {
+        this.render();
+        this._laserRaf = requestAnimationFrame(tick);
+      } else {
+        this._laser = null;
+        this.render();
+        this._laserRaf = null;
+      }
+    };
+    this._laserRaf = requestAnimationFrame(tick);
+  }
+
+  // ---------- 白板元素创建 ----------
+  addTextNode(wx, wy) {
+    const id = newId();
+    const node = { id, x: wx - 120, y: wy - 20, w: 240, h: 40, text: "", shape: "text", color: "transparent", textColor: this.toolColor, stroke: "transparent", fontSize: 18, parentId: null, collapsed: false };
+    this.doc.nodes.push(node);
+    this.selection = new Set([id]);
+    this.render(); this.onChange(); this.pushHistory();
+    this.beginTextEdit(id);
+    return id;
+  }
+  addImageNode(src, wx, wy, nw, nh) {
+    const maxW = 360;
+    const scale = Math.min(1, maxW / (nw || maxW));
+    const w = Math.round((nw || maxW) * scale), h = Math.round((nh || maxW * 0.6) * scale);
+    const id = newId();
+    const node = { id, x: wx - w / 2, y: wy - h / 2, w, h, text: "", shape: "image", src, color: "transparent", textColor: "#1f2a37", stroke: "transparent", fontSize: 14, parentId: null, collapsed: false };
+    this.doc.nodes.push(node);
+    this.selection = new Set([id]);
+    this.render(); this.onChange(); this.pushHistory();
+    return id;
+  }
+  addEmbedNode(url, wx, wy) {
+    const id = newId();
+    const node = { id, x: wx - 240, y: wy - 170, w: 480, h: 340, text: "", shape: "embed", url, color: "transparent", textColor: "#1f2a37", stroke: "#aab3bf", fontSize: 14, parentId: null, collapsed: false };
+    this.doc.nodes.push(node);
+    this.selection = new Set([id]);
+    this.render(); this.onChange(); this.pushHistory();
+    return id;
+  }
+  clearWhiteboard() {
+    this.doc.nodes = [];
+    this.doc.edges = [];
+    this.doc.strokes = [];
+    this.selection.clear();
+    this.render(); this.onChange(); this.pushHistory();
+  }
 }
 
 function escapeXml(s) {

@@ -40,4 +40,12 @@ export const ICONS = {
   theme: S(`<circle cx="12" cy="12" r="8"/><path d="M12 4v16M4 12h16"/>`),
   link: S(`<path d="M9 15l6-6"/><path d="M11 6l1-1a4 4 0 0 1 6 6l-1 1M13 18l-1 1a4 4 0 0 1-6-6l1-1"/>`),
   folder: S(`<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`),
+  // ---- 白板工具 ----
+  cursor: S(`<path d="M5 3l14 8-6.5 1.5L15 20l-3 1-2.5-7.5L5 17z"/>`),
+  hand: S(`<path d="M8 12V6a1.5 1.5 0 0 1 3 0v5"/><path d="M11 11V4.5a1.5 1.5 0 0 1 3 0V11"/><path d="M14 11V6a1.5 1.5 0 0 1 3 0v7a7 7 0 0 1-7 7h-.4a6.6 6.6 0 0 1-5.4-2.8L2.6 14a1.6 1.6 0 0 1 2.6-1.9L8 15"/>`),
+  frame: S(`<path d="M7 3v18M17 3v18M3 7h18M3 17h18"/>`),
+  eraser: S(`<path d="M7 21h13"/><path d="M5 13l8-8 6 6-8 8H7z"/><path d="M9.5 9.5l5 5"/>`),
+  laser: S(`<path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/><circle cx="12" cy="12" r="2.6"/>`),
+  embed: S(`<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8h18"/><path d="M10 12l-2 2 2 2M14 12l2 2-2 2"/>`),
+  trash2: S(`<path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/>`),
 };

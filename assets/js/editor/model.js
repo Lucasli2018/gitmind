@@ -51,5 +51,9 @@ export function sizeOf(n, type) {
   }
   const w = n.w || (n.shape === "diamond" ? 140 : 120);
   const h = n.h || (n.shape === "diamond" ? 90 : 50);
+  // 箭头 / 直线：w、h 是相对起点的增量，可能为负，尺寸取绝对值
+  if (n.shape === "arrow" || n.shape === "line") {
+    return { w: Math.max(2, Math.abs(n.w ?? 160)), h: Math.max(2, Math.abs(n.h ?? 0)), lines };
+  }
   return { w, h, lines };
 }

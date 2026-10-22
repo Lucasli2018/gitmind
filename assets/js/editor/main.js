@@ -3,7 +3,7 @@ import { Auth, getMap, saveMap, setShare, toast, fmtTime, fmtSize, byteLength } 
 import { ICONS } from "../icons.js";
 import { Editor } from "./canvas.js";
 import { FLOW_SHAPES } from "./flowchart.js";
-import { WB_TOOLS } from "./whiteboard.js";
+import { WB_TOOLS, WB_MORE, WB_COLORS } from "./whiteboard.js";
 import { openOutline } from "./outline.js";
 import { exportSVG, exportPNG, exportJSON, importJSON } from "./export.js";
 import { layoutMindmap } from "./mindmap.js";
@@ -161,8 +161,12 @@ function buildLayouts() {
 // ---------- 工具栏 ----------
 function buildToolbar() {
   const bar = document.getElementById("toolbar");
+  const wbBar = document.getElementById("wbBar");
   bar.innerHTML = "";
   const mode = editor.mode;
+  // 白板模式切换 body 类：隐藏左侧工具栏与脑图专属面板
+  document.body.classList.toggle("gm-wb-mode", mode === "whiteboard");
+  if (wbBar) wbBar.hidden = mode !== "whiteboard";
   if (mode === "mindmap") {
     addTool(bar, "plus", "子节点", () => { const sel = [...editor.selection][0]; if (sel) editor.addMindmapChild(sel); else ensureRoot(); });
     addTool(bar, "plus", "兄弟", () => { const sel = [...editor.selection][0]; if (sel) editor.addMindmapSibling(sel); });
@@ -173,17 +177,124 @@ function buildToolbar() {
       addTool(bar, s.icon, s.label, () => { const c = editor.viewCenterWorld(); editor.addFlowShape(s.shape, c.x, c.y); });
     }
     addTool(bar, "trash", "删除", () => editor.deleteSelection());
-  } else {
-    for (const t of WB_TOOLS) {
-      if (t.tool === "pen") {
-        const b = addTool(bar, t.icon, t.label, () => { editor.setTool(editor.tool === "pen" ? "select" : "pen"); refreshToolActive(); });
-      } else {
-        addTool(bar, t.icon, t.label, () => { const c = editor.viewCenterWorld(); editor.addWhiteboardNode(t.tool, c.x, c.y); editor.setTool("select"); refreshToolActive(); });
-      }
-    }
-    addTool(bar, "trash", "删除", () => editor.deleteSelection());
+  } else if (mode === "whiteboard" && wbBar) {
+    buildWbBar(wbBar);
+  }
+  updateHelpKeys();
+}
+
+// 白板浮动工具栏（画布顶部居中，类 Excalidraw）
+function buildWbBar(bar) {
+  bar.innerHTML = "";
+  let lastGroup = null;
+  for (const t of WB_TOOLS) {
+    if (lastGroup !== null && t.group !== lastGroup) bar.appendChild(wbSep());
+    lastGroup = t.group;
+    const b = document.createElement("button");
+    b.className = "gm-wb-btn";
+    b.dataset.tool = t.tool;
+    b.title = t.key ? `${t.label} (${t.key})` : t.label;
+    b.innerHTML = `${ICONS[t.icon] || ""}${t.key ? `<span class="kbd">${t.key}</span>` : ""}`;
+    b.addEventListener("click", () => { onWbTool(t.tool); });
+    bar.appendChild(b);
+  }
+  bar.appendChild(wbSep());
+  // 画笔 / 图形颜色
+  const colors = document.createElement("div");
+  colors.className = "gm-wb-colors";
+  for (const c of WB_COLORS) {
+    const s = document.createElement("button");
+    s.className = "gm-wb-color" + (c === editor.toolColor ? " active" : "");
+    s.style.background = c;
+    s.title = c;
+    s.addEventListener("click", () => {
+      editor.toolColor = c;
+      colors.querySelectorAll(".gm-wb-color").forEach((el) => el.classList.toggle("active", el === s));
+      if (editor.tool === "select") editor.setTool("pen"); // 选色后自动切画笔
+      refreshWbActive();
+    });
+    colors.appendChild(s);
+  }
+  bar.appendChild(colors);
+  // 更多菜单：嵌入网页 / 便签 / 清空白板
+  const more = document.createElement("div");
+  more.className = "gm-wb-more";
+  const mb = document.createElement("button");
+  mb.className = "gm-wb-btn";
+  mb.title = "更多";
+  mb.innerHTML = ICONS.menu;
+  const pop = document.createElement("div");
+  pop.className = "pop";
+  for (const m of WB_MORE) {
+    const item = document.createElement("button");
+    item.innerHTML = `${ICONS[m.icon] || ""}<span>${m.label}</span>${m.key ? `<span class="kbd">${m.key}</span>` : ""}`;
+    item.addEventListener("click", () => { more.classList.remove("open"); onWbMore(m.act); });
+    pop.appendChild(item);
+  }
+  mb.addEventListener("click", (e) => { e.stopPropagation(); more.classList.toggle("open"); });
+  pop.addEventListener("click", (e) => e.stopPropagation());
+  more.appendChild(mb);
+  more.appendChild(pop);
+  bar.appendChild(more);
+  refreshWbActive();
+}
+function wbSep() {
+  const s = document.createElement("span");
+  s.className = "gm-wb-sep";
+  return s;
+}
+function onWbTool(tool) {
+  if (tool === "image") { document.getElementById("wbImageFile").click(); return; }
+  editor.setTool(editor.tool === tool ? "select" : tool);
+  refreshWbActive();
+}
+function onWbMore(act) {
+  if (act === "embed") {
+    const url = prompt("输入要嵌入的网页地址（https://...）", "https://");
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url.trim())) { toast("请输入 http(s):// 开头的网址", "error"); return; }
+    const c = editor.viewCenterWorld();
+    editor.addEmbedNode(url.trim(), c.x, c.y);
+  } else if (act === "sticky") {
+    const c = editor.viewCenterWorld();
+    editor.addWhiteboardNode("sticky", c.x, c.y);
+    editor.setTool("select");
+    refreshWbActive();
+  } else if (act === "clear") {
+    if (confirm("确定清空白板上的所有内容？此操作可用 Ctrl+Z 撤销。")) editor.clearWhiteboard();
   }
 }
+function refreshWbActive() {
+  document.querySelectorAll("#wbBar .gm-wb-btn[data-tool]").forEach((b) => {
+    b.classList.toggle("active", b.dataset.tool === editor.tool);
+  });
+}
+
+// 帮助面板按模式显示对应快捷键
+function updateHelpKeys() {
+  const el = document.getElementById("helpKeys");
+  if (!el) return;
+  if (editor.mode === "whiteboard") {
+    el.innerHTML =
+      `选择 V · 抓手 H · 画框 F<br/>` +
+      `矩形 2 · 菱形 3 · 圆 4<br/>` +
+      `箭头 5 · 直线 6 · 画笔 7<br/>` +
+      `文字 8 · 图片 9 · 橡皮 0 · 激光笔 K<br/>` +
+      `Shift + 拖拽：直线 / 箭头吸附 45°<br/>` +
+      `删除：Delete / Backspace<br/>` +
+      `撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y<br/>` +
+      `平移：拖空白处 / 抓手 · 缩放：滚轮<br/>` +
+      `保存：Ctrl/⌘ + S`;
+  } else {
+    el.innerHTML =
+      `脑图：Tab 加子节点 · Enter 加兄弟<br/>` +
+      `删除：Delete / Backspace<br/>` +
+      `撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y / ⌘+Shift+Z<br/>` +
+      `平移：拖空白处 · 缩放：滚轮<br/>` +
+      `保存：Ctrl/⌘ + S`;
+  }
+}
+
 function addTool(bar, icon, label, action) {
   const b = document.createElement("button");
   b.className = "gm-tool";
@@ -194,12 +305,6 @@ function addTool(bar, icon, label, action) {
   });
   bar.appendChild(b);
   return b;
-}
-function refreshToolActive() {
-  const tools = document.querySelectorAll("#toolbar .gm-tool");
-  tools.forEach((t, i) => {
-    if (editor.mode === "whiteboard" && i === 0) t.classList.toggle("active", editor.tool === "pen");
-  });
 }
 
 // ---------- 模式切换 ----------
@@ -268,6 +373,24 @@ function wireChrome() {
   document.getElementById("outlineBtn").addEventListener("click", () => openOutline(editor));
   document.getElementById("delBtn").addEventListener("click", () => editor.deleteSelection());
   document.querySelectorAll("#modes button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+  // 白板插入图片：本地图片转 dataURL 后放进画布中心
+  document.getElementById("wbImageFile").addEventListener("change", (e) => {
+    const f = e.target.files[0];
+    e.target.value = "";
+    if (!f || !editor) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const c = editor.viewCenterWorld();
+        editor.addImageNode(reader.result, c.x, c.y, img.naturalWidth, img.naturalHeight);
+        editor.setTool("select");
+        refreshWbActive();
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(f);
+  });
   const titleInput = document.getElementById("titleInput");
   titleInput.addEventListener("input", () => { map.title = titleInput.value; scheduleSave(); });
   wireMobileDrawers();
@@ -311,6 +434,12 @@ function wireKeys() {
       return;
     }
     if (e.key === "Enter" && editor.mode === "mindmap") { e.preventDefault(); const sel = [...editor.selection][0]; if (sel) editor.addMindmapSibling(sel); return; }
+    // 白板工具快捷键（V/H/F/2/3/4/5/6/7/8/9/0/K）
+    if (editor.mode === "whiteboard") {
+      const wbKeys = { v: "select", h: "hand", f: "frame", "2": "rect", "3": "diamond", "4": "ellipse", "5": "arrow", "6": "line", "7": "pen", "8": "text", "9": "image", "0": "eraser", k: "laser" };
+      const tool = wbKeys[e.key.toLowerCase()];
+      if (tool) { e.preventDefault(); onWbTool(tool); return; }
+    }
     if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); editor.deleteSelection(); return; }
     if (e.key === "Escape") editor.clearSelection();
   });
