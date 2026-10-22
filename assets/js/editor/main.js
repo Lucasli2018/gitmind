@@ -1,5 +1,6 @@
 // 编辑器入口：加载导图、自动保存、工具栏、主题、导出、分享、快捷键
 import { Auth, getMap, saveMap, setShare, toast, fmtTime, fmtSize, byteLength } from "../api.js";
+import { showFloatPanel, showModal } from "../ui.js";
 import { ICONS } from "../icons.js";
 import { Editor } from "./canvas.js";
 import { FC_TOOLS } from "./flowchart.js";
@@ -20,12 +21,16 @@ document.getElementById("iImport").innerHTML = ICONS.upload;
 document.getElementById("undoBtn").innerHTML = `${ICONS.undo}<span>撤销</span>`;
 document.getElementById("redoBtn").innerHTML = `${ICONS.redo}<span>重做</span>`;
 
-// 同步顶栏 undo/redo 按钮的可用态
+// 同步顶栏与左下控制条 undo/redo 按钮的可用态
 function updateUndoRedoButtons(canUndo, canRedo) {
-  const u = document.getElementById("undoBtn");
-  const r = document.getElementById("redoBtn");
-  if (u) u.disabled = !canUndo;
-  if (r) r.disabled = !canRedo;
+  for (const id of ["undoBtn", "undoBtn2"]) {
+    const u = document.getElementById(id);
+    if (u) u.disabled = !canUndo;
+  }
+  for (const id of ["redoBtn", "redoBtn2"]) {
+    const r = document.getElementById(id);
+    if (r) r.disabled = !canRedo;
+  }
 }
 
 const THEMES = {
@@ -558,8 +563,19 @@ async function copyWbExport(asPng) {
 }
 function wbStats() {
   const d = editor.doc;
-  const bytes = JSON.stringify(d).length;
-  alert(`白板统计\n\n图形节点：${d.nodes.length} 个\n画笔笔画：${d.strokes.length} 笔\n连线：${d.edges.length} 条\n文档 JSON：${(bytes / 1024).toFixed(1)} KB`);
+  const bytes = byteLength(JSON.stringify(d));
+  let histBytes = 0;
+  try { for (const s of editor._history) histBytes += byteLength(JSON.stringify(s)); } catch (_) {}
+  const b = editor.getBounds();
+  const row = (l, v) => `<div class="gm-fp-row"><span>${l}</span><b>${v}</b></div>`;
+  showFloatPanel("详细统计信息",
+    `<div class="gm-fp-sec">画布</div>` +
+    row("元素", d.nodes.length + d.strokes.length + d.edges.length) +
+    row("宽度", b ? Math.round(b.w) : 0) +
+    row("高度", b ? Math.round(b.h) : 0) +
+    `<div class="gm-fp-sec">存储</div>` +
+    row("画布", fmtSize(bytes)) +
+    row("总计", fmtSize(bytes + histBytes)));
 }
 
 // 帮助面板按模式显示对应快捷键
@@ -596,6 +612,84 @@ function updateHelpKeys() {
       `平移：拖空白处 · 缩放：滚轮<br/>` +
       `保存：Ctrl/⌘ + S`;
   }
+}
+
+// ---------- 快捷键弹框（右下角 ? 按钮） ----------
+const SHORTCUTS = {
+  whiteboard: {
+    工具: [
+      ["选择", ["V", "或", "1"]], ["抓手", ["H"]], ["画框", ["F"]],
+      ["矩形", ["2"]], ["菱形", ["3"]], ["圆形", ["4"]], ["箭头", ["5"]], ["直线", ["6"]],
+      ["画笔", ["7"]], ["文字", ["8"]], ["图片", ["9"]], ["橡皮", ["0"]], ["激光笔", ["K"]],
+    ],
+    编辑器: [
+      ["移动画布", ["拖空白处", "或", "滚轮"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]],
+      ["框选多选", ["拖拽"]], ["直线变换", ["拖端点 / 中点"]], ["删除", ["Delete"]],
+      ["复制 / 粘贴", ["Ctrl+C", "/", "V"]], ["全部选中", ["Ctrl+A"]], ["显示网格", ["Ctrl+'"]],
+      ["复制为 PNG", ["Shift+Alt+C"]], ["统计信息", ["Alt+/"]],
+      ["撤销 / 重做", ["Ctrl+Z", "/", "Ctrl+Y"]], ["保存", ["Ctrl+S"]],
+    ],
+  },
+  flowchart: {
+    工具: [
+      ["矩形", ["1"]], ["圆角", ["2"]], ["判断", ["3"]], ["椭圆", ["4"]],
+      ["平行四边形", ["5"]], ["文本", ["6"]], ["图片", ["7"]], ["关联线", ["L"]],
+    ],
+    编辑器: [
+      ["连线", ["拖节点端口"]], ["移动画布", ["拖空白处"]], ["缩放", ["滚轮"]],
+      ["重置缩放", ["点击 100%"]], ["删除", ["Delete"]],
+      ["撤销 / 重做", ["Ctrl+Z", "/", "Ctrl+Y"]], ["保存", ["Ctrl+S"]],
+    ],
+  },
+  mindmap: {
+    工具: [["加子节点", ["Tab"]], ["加兄弟节点", ["Enter"]]],
+    编辑器: [
+      ["移动画布", ["拖空白处"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]],
+      ["删除", ["Delete"]], ["撤销 / 重做", ["Ctrl+Z", "/", "Ctrl+Y"]], ["保存", ["Ctrl+S"]],
+    ],
+  },
+};
+function openShortcutsModal() {
+  const sc = SHORTCUTS[editor.mode] || SHORTCUTS.mindmap;
+  const col = (name, rows) =>
+    `<div class="gm-sc-col"><h4>${name}</h4>` +
+    rows.map(([l, kbds]) =>
+      `<div class="gm-sc-row"><span>${l}</span><span class="gm-sc-kbd">` +
+      kbds.map((k) => (k === "或" || k === "/" ? `<em>${k}</em>` : `<kbd>${k}</kbd>`)).join("") +
+      `</span></div>`).join("") +
+    `</div>`;
+  const keys = Object.keys(sc);
+  showModal("快捷键列表", `<div class="gm-sc-grid">${keys.map((k) => col(k, sc[k])).join("")}</div>`);
+}
+
+// ---------- 左下角控制条（缩放 / 撤销重做）+ 右栏收起 ----------
+function wireBottomBars() {
+  const center = () => { const r = editor.rect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+  document.getElementById("zoomOut2").addEventListener("click", () => { const [x, y] = center(); editor.zoomAt(1 / 1.2, x, y); });
+  document.getElementById("zoomIn2").addEventListener("click", () => { const [x, y] = center(); editor.zoomAt(1.2, x, y); });
+  document.getElementById("zoomPct").addEventListener("click", () => { const [x, y] = center(); editor.zoomAt(1 / editor.view.scale, x, y); });
+  document.getElementById("undoBtn2").addEventListener("click", () => editor.undo());
+  document.getElementById("redoBtn2").addEventListener("click", () => editor.redo());
+  const pct = document.getElementById("zoomPct");
+  setInterval(() => {
+    const v = Math.round(editor.view.scale * 100) + "%";
+    if (pct.textContent !== v) pct.textContent = v;
+  }, 250);
+  // 右下角 ? 快捷键弹框
+  document.getElementById("helpFab").addEventListener("click", openShortcutsModal);
+  // 右侧说明栏收起（localStorage 记忆）
+  const st = document.getElementById("sideToggle");
+  const applySide = () => {
+    const hidden = localStorage.getItem("gm_side_hidden") === "1";
+    document.body.classList.toggle("gm-side-hidden", hidden);
+    st.textContent = hidden ? "«" : "›";
+    st.title = hidden ? "展开侧栏" : "收起侧栏";
+  };
+  st.addEventListener("click", () => {
+    localStorage.setItem("gm_side_hidden", document.body.classList.contains("gm-side-hidden") ? "0" : "1");
+    applySide();
+  });
+  applySide();
 }
 
 function addTool(bar, icon, label, action) {
@@ -696,6 +790,7 @@ function wireChrome() {
   });
   const titleInput = document.getElementById("titleInput");
   titleInput.addEventListener("input", () => { map.title = titleInput.value; scheduleSave(); });
+  wireBottomBars();
   wireMobileDrawers();
   // 每分钟自动保存一次（替代实时保存），操作时不发请求以提升流畅度
   autosaveTimer = setInterval(autosaveTick, AUTOSAVE_MS);

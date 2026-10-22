@@ -44,7 +44,19 @@
       <div class="gm-wb-bar" id="wbBar" hidden></div>
       <div class="gm-wb-style" id="wbStylePanel" hidden></div>
       <input type="file" id="wbImageFile" accept="image/*" style="display:none" />
+      <!-- 左下角：缩放 / 撤销重做 -->
+      <div class="gm-ctl-bar" id="ctlBar">
+        <button id="zoomOut2" title="缩小">−</button>
+        <button id="zoomPct" class="gm-ctl-pct" title="重置缩放">100%</button>
+        <button id="zoomIn2" title="放大">+</button>
+        <span class="gm-ctl-sep"></span>
+        <button id="undoBtn2" title="撤销 (Ctrl+Z)" disabled></button>
+        <button id="redoBtn2" title="重做 (Ctrl+Y)" disabled></button>
+      </div>
+      <!-- 右下角：快捷键 -->
+      <button class="gm-help-fab" id="helpFab" title="快捷键列表">?</button>
     </div>
+    <button class="gm-side-toggle" id="sideToggle" title="收起侧栏">›</button>
     <div class="gm-right">
       <div class="gm-panel">
         <h4>视图</h4>

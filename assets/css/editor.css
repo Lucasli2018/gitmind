@@ -288,3 +288,62 @@ body.gm-wb-mode #outlineBtn { display: none; }
   .gm-modes button { padding: 5px 7px; font-size: 11px; }
   .gm-right { width: 82vw; }
 }
+
+/* ---------- 左下角：缩放 / 撤销重做控制条 ---------- */
+.gm-ctl-bar {
+  position: absolute; bottom: 14px; left: 14px; z-index: 16;
+  display: flex; align-items: center; gap: 2px; padding: 4px;
+  background: #fff; border: 1px solid #e8ecf1; border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(16,30,54,.12);
+}
+.gm-ctl-bar button {
+  border: none; background: transparent; min-width: 34px; height: 32px;
+  border-radius: 9px; color: #4b5563; font-size: 15px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0 6px;
+}
+.gm-ctl-bar button:hover { background: #eef2f6; color: #1f2a37; }
+.gm-ctl-bar button:disabled { opacity: .4; cursor: default; background: transparent; color: #4b5563; }
+.gm-ctl-bar button svg { width: 17px; height: 17px; }
+.gm-ctl-pct { font-size: 13px; min-width: 54px; }
+.gm-ctl-sep { width: 1px; height: 20px; background: #e8ecf1; margin: 0 4px; }
+
+/* ---------- 右下角：快捷键悬浮按钮 ---------- */
+.gm-help-fab {
+  position: absolute; bottom: 14px; right: 14px; z-index: 16;
+  width: 38px; height: 38px; border-radius: 50%;
+  border: 1px solid #e8ecf1; background: #fff; color: #4b5563;
+  font-size: 16px; font-weight: 700; cursor: pointer;
+  box-shadow: 0 8px 24px rgba(16,30,54,.12);
+}
+.gm-help-fab:hover { background: #e6f7f4; color: #0b7d73; border-color: #bfe9e2; }
+
+/* ---------- 右侧说明栏收起 ---------- */
+.gm-side-toggle {
+  position: fixed; top: 50%; right: 0; transform: translateY(-50%); z-index: 17;
+  width: 20px; height: 56px; border: 1px solid #e8ecf1; border-right: none;
+  border-radius: 10px 0 0 10px; background: #fff; color: #8a94a6;
+  font-size: 13px; line-height: 1; cursor: pointer; padding: 0;
+  box-shadow: -4px 0 12px rgba(16,30,54,.06);
+}
+.gm-side-toggle:hover { color: #0b7d73; }
+body.gm-side-hidden .gm-right { display: none; }
+
+/* ---------- 快捷键弹框（两栏） ---------- */
+.gm-sc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 36px; }
+.gm-sc-col h4 { margin: 12px 0 6px; font-size: 14px; color: #1f2a37; }
+.gm-sc-col h4:first-child { margin-top: 2px; }
+.gm-sc-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  padding: 7px 4px; border-bottom: 1px solid #f1f4f8; font-size: 13.5px; color: #4b5563;
+}
+.gm-sc-kbd { display: flex; gap: 4px; align-items: center; flex: 0 0 auto; }
+.gm-sc-kbd em { font-style: normal; color: #9aa4b2; font-size: 12px; }
+.gm-sc-kbd kbd {
+  background: #eef2f6; border-radius: 6px; padding: 2px 8px;
+  font-size: 12px; color: #1f2a37; font-family: inherit; white-space: nowrap;
+}
+@media (max-width: 760px) {
+  .gm-ctl-bar { left: 10px; bottom: 10px; }
+  .gm-help-fab { display: none; }
+  .gm-side-toggle { display: none; }
+}

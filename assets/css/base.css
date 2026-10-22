@@ -222,3 +222,54 @@ footer.site { border-top: 1px solid var(--line); padding: 28px 0; color: var(--i
   .map-card .meta h3 { font-size: 15px; }
   .map-card .acts .btn { font-size: 12px; padding: 6px 8px; }
 }
+
+/* ---------- 通用弹层：确认框 / 模态（ui.js） ---------- */
+.gm-modal-mask {
+  position: fixed; inset: 0; z-index: 900; background: rgba(16,30,54,.35);
+  display: flex; align-items: center; justify-content: center; animation: gmFade .15s ease;
+}
+.gm-modal {
+  position: relative; width: min(480px, calc(100vw - 40px)); max-height: min(84vh, 720px);
+  background: #fff; border-radius: 16px; box-shadow: var(--shadow-lg);
+  padding: 24px; display: flex; flex-direction: column; animation: gmPop .18s ease;
+}
+.gm-modal-lg { width: min(860px, calc(100vw - 40px)); }
+.gm-modal h3 { margin: 0 0 14px; font-size: 20px; }
+.gm-modal-x {
+  position: absolute; top: 14px; right: 14px; width: 30px; height: 30px;
+  border: none; background: transparent; border-radius: 8px; font-size: 20px;
+  color: var(--ink-3); display: flex; align-items: center; justify-content: center; line-height: 1;
+}
+.gm-modal-x:hover { background: #f1f4f8; color: var(--ink); }
+.gm-modal-body { display: flex; gap: 12px; align-items: flex-start; font-size: 15px; color: var(--ink-2); line-height: 1.7; }
+.gm-modal-ico {
+  flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--coral); color: #fff; font-weight: 800; font-size: 15px;
+  display: flex; align-items: center; justify-content: center;
+}
+.gm-modal-acts { display: flex; justify-content: flex-end; gap: 10px; margin-top: 26px; }
+.gm-modal-scroll { overflow: auto; }
+.gm-btn-coral {
+  background: var(--coral); color: #fff; border-color: transparent;
+  box-shadow: 0 6px 16px rgba(255,122,89,.32);
+}
+.gm-btn-coral:hover { background: #ff6a45; transform: translateY(-1px); }
+@keyframes gmFade { from { opacity: 0; } }
+@keyframes gmPop { from { transform: scale(.96); opacity: 0; } }
+
+/* ---------- 右上悬浮面板（详细统计信息等） ---------- */
+.gm-float-panel {
+  position: fixed; top: 64px; right: 14px; z-index: 800; width: 224px;
+  background: #fff; border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: var(--shadow-lg); padding: 12px 14px 14px; animation: gmPop .15s ease;
+}
+.gm-fp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.gm-fp-head b { font-size: 15px; }
+.gm-fp-x {
+  border: none; background: transparent; font-size: 17px; color: var(--ink-3);
+  width: 24px; height: 24px; border-radius: 6px; line-height: 1;
+}
+.gm-fp-x:hover { background: #f1f4f8; color: var(--ink); }
+.gm-fp-sec { font-size: 13px; font-weight: 700; color: var(--ink-2); text-align: center; margin: 10px 0 4px; }
+.gm-fp-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--ink-3); padding: 2.5px 0; }
+.gm-fp-row b { color: var(--ink); font-weight: 600; }

@@ -26,6 +26,7 @@
 - 🛠 **增量迁移**：`scripts/migrate-r2-key.mjs`（补 `storage`/`r2_key`/`size` 列、`data` 放开为可 NULL、回填 size，幂等可重跑）；`scripts/fix-r2-content-type.mjs`（存量 R2 对象 Content-Type 统一刷为 `application/json; charset=utf-8`，幂等可重跑）；`scripts/deploy.mjs`（Machine 级 Token + `CLOUDFLARE_ACCOUNT_ID` 非交互部署）
 - 📝 **大纲模式**：文字大纲与脑图双向转换
 - 🧲 **白板右键菜单**：粘贴 / 复制（Ctrl+C/V 内部剪贴板，粘贴到鼠标位置）、复制为 PNG/SVG 到剪贴板（有选中时仅复制选中图形）、全部选中（Ctrl+A）、显示网格（Ctrl+'，随视图平移缩放，localStorage 记忆）、置顶/置底、删除、详细统计信息
+- 🪟 **交互细节**：删除文档二次确认弹框（珊瑚橙确认按钮）；详细统计信息右上悬浮面板（元素/宽高/画布与总存储）；右下角「?」打开两栏快捷键弹框；左下角缩放（−/100%/+，点百分比重置）与撤销重做控制条；右侧说明栏可一键收起/展开（记忆偏好）
 - ⌨️ **快捷键**：Tab 加子节点、Enter 加兄弟、Delete 删除、Ctrl/⌘+S 保存、滚轮缩放、拖空白平移
 
 ## 目录结构

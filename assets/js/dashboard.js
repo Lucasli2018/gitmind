@@ -1,5 +1,6 @@
 // 仪表盘：列表 / 新建 / 分享 / 重命名 / 删除
 import { Auth, getMaps, createMap, saveMap, deleteMap, setShare, fmtDate, fmtSize, toast } from "./api.js";
+import { confirmDialog } from "./ui.js";
 import { ICONS } from "./icons.js";
 import { TEMPLATES, emptyDoc } from "./templates.js";
 
@@ -87,7 +88,13 @@ async function onRename(m) {
 }
 
 async function onDelete(m) {
-  if (!confirm(`确定删除「${m.title}」？此操作不可恢复。`)) return;
+  // 二次确认弹框（替代原生 confirm）
+  const ok = await confirmDialog({
+    title: "提示",
+    message: `确认删除「${escapeHtml(m.title)}」？删除后不可恢复。`,
+    okText: "确认删除",
+  });
+  if (!ok) return;
   try {
     await deleteMap(m.id);
     maps = maps.filter((x) => x.id !== m.id);
