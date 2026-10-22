@@ -208,6 +208,7 @@ function buildFcBar(bar) {
 function onFcAction(act) {
   if (act === "undo") { editor.undo(); return; }
   if (act === "redo") { editor.redo(); return; }
+  if (act === "select") { editor.setTool("select"); refreshFcActive(); return; }
   if (act === "delete") { editor.deleteSelection(); return; }
   if (act === "image") { document.getElementById("wbImageFile").click(); return; }
   if (act === "link") {
@@ -225,7 +226,9 @@ function onFcAction(act) {
 }
 function refreshFcActive() {
   document.querySelectorAll("#wbBar .gm-fc-btn").forEach((b) => {
-    b.classList.toggle("active", b.dataset.act === "link" && editor.tool === "link");
+    const isSelect = b.dataset.act === "select" && editor.tool === "select";
+    const isLink = b.dataset.act === "link" && editor.tool === "link";
+    b.classList.toggle("active", isSelect || isLink);
   });
 }
 
@@ -590,26 +593,29 @@ function updateHelpKeys() {
       `文字 8 · 图片 9 · 橡皮 0 · 激光笔 K<br/>` +
       `直线/箭头选中：拖端点移动 · 拖中点弯曲<br/>` +
       `Shift + 拖拽：直线 / 箭头吸附 45°<br/>` +
+      `框选：空白处左键拖拽（Shift 叠加）<br/>` +
       `删除：Delete / Backspace<br/>` +
       `撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y<br/>` +
-      `平移：拖空白处 / 抓手 · 缩放：滚轮<br/>` +
-      `保存：Ctrl/⌘ + S`;
+      `平移：中键拖拽 / Alt+拖拽 / 抓手<br/>` +
+      `缩放：滚轮 · 保存：Ctrl/⌘ + S`;
   } else if (editor.mode === "flowchart") {
     el.innerHTML =
+      `选择 V（空白拖拽框选多个节点）<br/>` +
       `矩形 1 · 圆角 2 · 判断 3<br/>` +
       `椭圆 4 · 平行四边形 5 · 文本 6<br/>` +
       `图片 7 · 关联线 L（点起点再点目标）<br/>` +
       `连线：拖节点上下端口到目标节点<br/>` +
       `删除：Delete / Backspace<br/>` +
       `撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y<br/>` +
-      `平移：拖空白处 · 缩放：滚轮<br/>` +
+      `平移：中键拖拽 / Alt+拖拽 · 缩放：滚轮<br/>` +
       `保存：Ctrl/⌘ + S`;
   } else {
     el.innerHTML =
       `脑图：Tab 加子节点 · Enter 加兄弟<br/>` +
+      `框选：空白处左键拖拽（Shift 叠加）<br/>` +
       `删除：Delete / Backspace<br/>` +
       `撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y / ⌘+Shift+Z<br/>` +
-      `平移：拖空白处 · 缩放：滚轮<br/>` +
+      `平移：中键拖拽 / Alt+拖拽 · 缩放：滚轮<br/>` +
       `保存：Ctrl/⌘ + S`;
   }
 }
@@ -623,8 +629,8 @@ const SHORTCUTS = {
       ["画笔", ["7"]], ["文字", ["8"]], ["图片", ["9"]], ["橡皮", ["0"]], ["激光笔", ["K"]],
     ],
     编辑器: [
-      ["移动画布", ["拖空白处", "或", "滚轮"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]],
-      ["框选多选", ["拖拽"]], ["直线变换", ["拖端点 / 中点"]], ["删除", ["Delete"]],
+      ["移动画布", ["中键拖拽", "/", "Alt+拖拽"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]],
+      ["框选多选", ["拖空白处", "或", "Shift+拖"]], ["直线变换", ["拖端点 / 中点"]], ["删除", ["Delete"]],
       ["复制 / 粘贴", ["Ctrl+C", "/", "V"]], ["全部选中", ["Ctrl+A"]], ["显示网格", ["Ctrl+'"]],
       ["复制为 PNG", ["Shift+Alt+C"]], ["统计信息", ["Alt+/"]],
       ["撤销 / 重做", ["Ctrl+Z", "/", "Ctrl+Y"]], ["保存", ["Ctrl+S"]],
@@ -632,11 +638,12 @@ const SHORTCUTS = {
   },
   flowchart: {
     工具: [
-      ["矩形", ["1"]], ["圆角", ["2"]], ["判断", ["3"]], ["椭圆", ["4"]],
+      ["选择", ["V"]], ["矩形", ["1"]], ["圆角", ["2"]], ["判断", ["3"]], ["椭圆", ["4"]],
       ["平行四边形", ["5"]], ["文本", ["6"]], ["图片", ["7"]], ["关联线", ["L"]],
     ],
     编辑器: [
-      ["连线", ["拖节点端口"]], ["移动画布", ["拖空白处"]], ["缩放", ["滚轮"]],
+      ["框选多选", ["拖空白处", "或", "Shift+拖"]], ["连线", ["拖节点端口"]],
+      ["移动画布", ["中键拖拽", "或", "Alt+拖拽"]], ["缩放", ["滚轮"]],
       ["重置缩放", ["点击 100%"]], ["删除", ["Delete"]],
       ["撤销 / 重做", ["Ctrl+Z", "/", "Ctrl+Y"]], ["保存", ["Ctrl+S"]],
     ],
@@ -644,7 +651,8 @@ const SHORTCUTS = {
   mindmap: {
     工具: [["加子节点", ["Tab"]], ["加兄弟节点", ["Enter"]]],
     编辑器: [
-      ["移动画布", ["拖空白处"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]],
+      ["框选多选", ["拖空白处", "或", "Shift+拖"]],
+      ["移动画布", ["中键拖拽", "或", "Alt+拖拽"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]],
       ["删除", ["Delete"]], ["撤销 / 重做", ["Ctrl+Z", "/", "Ctrl+Y"]], ["保存", ["Ctrl+S"]],
     ],
   },
@@ -832,9 +840,9 @@ function wireKeys() {
       return;
     }
     if (e.key === "Enter" && editor.mode === "mindmap") { e.preventDefault(); const sel = [...editor.selection][0]; if (sel) editor.addMindmapSibling(sel); return; }
-    // 流程图工具快捷键（1-6 图形 / 7 图片 / L 关联线）
+    // 流程图工具快捷键（V 选择 / 1-6 图形 / 7 图片 / L 关联线）
     if (editor.mode === "flowchart") {
-      const fcKeys = { "1": "shape:rect", "2": "shape:rounded", "3": "shape:diamond", "4": "shape:ellipse", "5": "shape:parallelogram", "6": "shape:text", "7": "image", l: "link" };
+      const fcKeys = { v: "select", "1": "shape:rect", "2": "shape:rounded", "3": "shape:diamond", "4": "shape:ellipse", "5": "shape:parallelogram", "6": "shape:text", "7": "image", l: "link" };
       const act = fcKeys[e.key.toLowerCase()];
       if (act) { e.preventDefault(); onFcAction(act); return; }
     }

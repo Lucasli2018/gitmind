@@ -533,8 +533,15 @@ export class Editor {
 
   // ---------- 指针事件 ----------
   onDown(e) {
-    if (e.button !== 0) return;
     if (this._pinch) return;
+    // 中键：所有模式下拖拽平移（左键空白拖拽已用于框选）
+    if (e.button === 1) {
+      e.preventDefault();
+      const r0 = this.rect();
+      this._pan = { sx: e.clientX - r0.left, sy: e.clientY - r0.top, ox: this.view.x, oy: this.view.y };
+      return;
+    }
+    if (e.button !== 0) return;
     const r = this.rect();
     const sx = e.clientX - r.left, sy = e.clientY - r.top;
     const target = e.target;
@@ -602,6 +609,8 @@ export class Editor {
           this.eraseAt(w);
           return;
         case "text":
+          // 阻止 pointerdown 默认行为把焦点转移走（否则编辑框刚聚焦即 blur 关闭）
+          e.preventDefault();
           this.addTextNode(w.x, w.y);
           return;
         case "image":
@@ -629,8 +638,9 @@ export class Editor {
       this._drag = { sx, sy, moved: false, orig, movable };
       return;
     }
-    // 空白：白板选择工具下拖拽框选多个元素；其他模式 / 抓手平移
-    if (this.mode === "whiteboard" && this.tool === "select") {
+    // 空白：选择工具下左键拖拽框选多个元素（脑图 / 流程图 / 白板通用）；
+    // Alt+左键拖拽 = 平移画布（中键拖拽 / 抓手工具也可平移）
+    if (!this.readOnly && this.tool === "select" && !e.altKey) {
       if (!e.shiftKey) this.clearSelection();
       const w = this.toWorld(e.clientX, e.clientY);
       this._marquee = { x0: w.x, y0: w.y, x1: w.x, y1: w.y, base: e.shiftKey ? new Set(this.selection) : new Set() };
@@ -791,7 +801,8 @@ export class Editor {
       (isTextShape && n.fontStyle === "italic" ? " font-style:italic;" : "") +
       ` color:${fg}; background:${bg}; z-index:50; overflow:hidden;`;
     document.body.appendChild(ta);
-    ta.focus(); ta.select();
+    // 延迟聚焦：等指针事件默认行为（焦点转移）跑完，避免编辑框刚出现即失焦关闭
+    setTimeout(() => { ta.focus(); ta.select(); }, 0);
     const commit = () => {
       const old = n.text;
       const val = ta.value;
@@ -1147,6 +1158,8 @@ export class Editor {
     };
     this.doc.nodes.push(node);
     this.selection = new Set([id]);
+    // 参考流程图文本工具：用完自动回到选择工具（先切工具再开编辑框，避免重渲染干扰）
+    this.setTool("select");
     this.render(); this.onChange(); this.pushHistory();
     this.beginTextEdit(id);
     return id;
