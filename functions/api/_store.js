@@ -19,7 +19,7 @@ export async function putMapData(env, id, dataStr, userId) {
   if (env.R2) {
     try {
       r2key = userId ? R2_KEY(userId, id) : LEGACY_R2_KEY(id);
-      await env.R2.put(r2key, dataStr, { type: "application/json" });
+      await env.R2.put(r2key, dataStr, { type: "application/json; charset=utf-8" });
       r2ok = true;
     } catch (e) {
       console.error("[store] R2 写入失败，已回退 D1 兜底:", e?.message || e);

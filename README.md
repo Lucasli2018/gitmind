@@ -13,11 +13,13 @@
 
 ### 通用能力
 - 👤 **账号体系**：邮箱注册 / 登录（PBKDF2 口令哈希 + HttpOnly Cookie 会话，`gm_sid`）
-- ☁️ **云端存储**：Cloudflare D1（共享 `dev` 库，表前缀 `gm_`），编辑自动保存（每分钟落盘 + 关页兜底）
+- ☁️ **云端存储**：Cloudflare D1（共享 `dev` 库，表前缀 `gm_`）+ R2 对象存储——导图内容优先存 R2（对象 Content-Type 统一为 `application/json; charset=utf-8`，key 格式 `maps/<用户ID>/<导图ID>.json`），`gm_maps.data` 置 NULL 不冗余；R2 不可用时自动回退 D1 `data` 列兜底，读取按 `r2_key` → 旧格式 key → D1 三级回退
 - 💾 **保存状态与文件大小**：顶栏显示「已保存 09:39 · 12.3 KB」，浏览列表与分享页同样展示文件大小（`gm_maps.size` 落库）
+- 🔄 **格式兼容**：自动识别并转换 simple-mind-map（mind-map 项目）格式的旧快照 / 导入文件（`layout/root/children` 树形 → 原生 `nodes` 平铺，`logicalStructure` 等布局名映射），云端加载即转换并回写自愈
 - 📋 **模板库**：读书笔记 / 项目计划 / 会议纪要 / 知识梳理 / 请假流程 / 白板涂鸦
 - 🔗 **分享链接**：一键生成公开只读页 `/share.html?id=<id>`
-- 📤 **导入导出**：PNG / SVG / JSON 导出，JSON 导入
+- 📤 **导入导出**：PNG / SVG / JSON 导出，JSON 导入（兼容 simple-mind-map 导出格式）
+- 🛠 **增量迁移**：`scripts/migrate-r2-key.mjs`（补 `storage`/`r2_key`/`size` 列、`data` 放开为可 NULL、回填 size，幂等可重跑）；`scripts/deploy.mjs`（Machine 级 Token + `CLOUDFLARE_ACCOUNT_ID` 非交互部署）
 - 📝 **大纲模式**：文字大纲与脑图双向转换
 - ⌨️ **快捷键**：Tab 加子节点、Enter 加兄弟、Delete 删除、Ctrl/⌘+S 保存、滚轮缩放、拖空白平移
 
