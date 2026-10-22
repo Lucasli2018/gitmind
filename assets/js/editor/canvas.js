@@ -791,29 +791,66 @@ export class Editor {
     const fam = isTextShape && n.fontFamily === "serif" ? 'Georgia,"Songti SC","SimSun",serif'
       : isTextShape && n.fontFamily === "code" ? '"SFMono-Regular",Consolas,"Courier New",monospace'
       : "inherit";
+    const fs = n.fontSize || 15;
     const ta = document.createElement("textarea");
     ta.value = n.text || "";
     ta.className = "gm-edit";
-    ta.style.cssText =
-      `position:fixed; left:${left}px; top:${top}px; width:${Math.max(s.w * this.view.scale, 60)}px; height:${Math.max(s.h * this.view.scale, 30)}px;` +
-      `font-size:${ (n.fontSize || 15) * this.view.scale }px; border:2px solid #11b5a4; border-radius:12px; padding:6px 8px;` +
-      `resize:none; outline:none; text-align:${align}; box-sizing:border-box; font-family:${fam};` +
-      (isTextShape && n.fontStyle === "italic" ? " font-style:italic;" : "") +
-      ` color:${fg}; background:${bg}; z-index:50; overflow:hidden;`;
+    ta.spellcheck = false;
+    if (isTextShape) {
+      // 自由文字：Excalidraw 风格透明编辑区——无边框无底色，光标（竖线）直接落在创建/点击位置等待输入
+      const LH = (fs + 7) * this.view.scale;
+      const ew = Math.max(48, Math.min(360 * this.view.scale, r.right - left - 16));
+      const padTop = Math.max(0, (s.h * this.view.scale - LH) / 2);
+      ta.style.cssText =
+        `position:fixed; left:${left}px; top:${top + padTop}px; width:${ew}px; height:${LH + 4}px;` +
+        `font-size:${fs * this.view.scale}px; font-weight:600; line-height:${LH}px;` +
+        `border:none; border-radius:2px; padding:0 2px; margin:0; resize:none; outline:none;` +
+        `text-align:${align}; box-sizing:border-box; font-family:${fam};` +
+        (n.fontStyle === "italic" ? " font-style:italic;" : "") +
+        ` color:${fg}; caret-color:${fg}; background:transparent; z-index:50; overflow:hidden;`;
+    } else {
+      ta.style.cssText =
+        `position:fixed; left:${left}px; top:${top}px; width:${Math.max(s.w * this.view.scale, 60)}px; height:${Math.max(s.h * this.view.scale, 30)}px;` +
+        `font-size:${fs * this.view.scale}px; border:2px solid #11b5a4; border-radius:12px; padding:6px 8px;` +
+        `resize:none; outline:none; text-align:${align}; box-sizing:border-box; font-family:${fam};` +
+        ` color:${fg}; background:${bg}; z-index:50; overflow:hidden;`;
+    }
     document.body.appendChild(ta);
     // 延迟聚焦：等指针事件默认行为（焦点转移）跑完，避免编辑框刚出现即失焦关闭
     setTimeout(() => { ta.focus(); ta.select(); }, 0);
+    // 自由文字：输入时编辑区自动增高（多行可见），同步渲染节点尺寸
+    if (isTextShape) {
+      ta.addEventListener("input", () => {
+        const maxH = (fs + 7) * 14 * this.view.scale;
+        ta.style.height = Math.min(ta.scrollHeight, maxH) + "px";
+      });
+    }
+    let done = false;
+    let cancelled = false;
+    // 自由文字提交/取消时若内容为空：直接丢弃节点（Excalidraw 同款，不留隐形空节点）
+    const cleanupEmpty = () => {
+      if (isTextShape && !(n.text || "").trim()) {
+        this.doc.nodes = this.doc.nodes.filter((x) => x.id !== n.id);
+        this.selection.delete(n.id);
+      }
+    };
     const commit = () => {
-      const old = n.text;
+      if (done) return;
+      done = true;
       const val = ta.value;
       ta.remove();
-      if (val !== old) { n.text = val; this.render(); this.pushHistory(); this.onChange(); }
+      if (cancelled) { cleanupEmpty(); this.render(); return; }
+      const changed = val !== n.text;
+      if (changed) n.text = val;
+      cleanupEmpty();
+      const gone = !this.doc.nodes.some((x) => x.id === n.id);
+      if (changed || gone) { this.render(); this.pushHistory(); this.onChange(); }
       else { this.render(); }
     };
     ta.addEventListener("blur", commit);
     ta.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); commit(); }
-      else if (ev.key === "Escape") { ev.preventDefault(); ta.remove(); }
+      if (ev.key === "Enter" && !ev.shiftKey && !isTextShape) { ev.preventDefault(); commit(); }
+      else if (ev.key === "Escape") { ev.preventDefault(); cancelled = true; commit(); }
       ev.stopPropagation();
     });
   }
@@ -1150,10 +1187,15 @@ export class Editor {
   addTextNode(wx, wy) {
     const id = newId();
     const P = this.wbProps;
+    const fs = P.fontSize || 18;
+    // 点击即输入：起点锚定在点击位置（左对齐起笔，Excalidraw 同款）；对齐方式创建后仍可在面板调整
+    const align = "left";
+    const w0 = 240;
+    const x = wx - 2;
     const node = {
-      id, x: wx - 120, y: wy - 20, w: 240, h: 40, text: "", shape: "text", color: "transparent",
-      textColor: this.toolColor, stroke: "transparent", fontSize: P.fontSize || 18,
-      fontStyle: P.fontStyle || "normal", fontFamily: P.fontFamily || "sans", textAlign: P.textAlign || "center",
+      id, x, y: wy - fs / 2 - 6, w: w0, h: fs + 12, text: "", shape: "text", color: "transparent",
+      textColor: this.toolColor, stroke: "transparent", fontSize: fs,
+      fontStyle: P.fontStyle || "normal", fontFamily: P.fontFamily || "sans", textAlign: align,
       parentId: null, collapsed: false,
     };
     this.doc.nodes.push(node);
