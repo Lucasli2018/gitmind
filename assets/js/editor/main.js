@@ -2,7 +2,7 @@
 import { Auth, getMap, saveMap, setShare, toast, fmtTime, fmtSize, byteLength } from "../api.js";
 import { ICONS } from "../icons.js";
 import { Editor } from "./canvas.js";
-import { FLOW_SHAPES } from "./flowchart.js";
+import { FC_TOOLS } from "./flowchart.js";
 import { WB_TOOLS, WB_MORE, WB_COLORS } from "./whiteboard.js";
 import { openOutline } from "./outline.js";
 import { exportSVG, exportPNG, exportJSON, importJSON } from "./export.js";
@@ -164,28 +164,69 @@ function buildToolbar() {
   const wbBar = document.getElementById("wbBar");
   bar.innerHTML = "";
   const mode = editor.mode;
-  // 白板模式切换 body 类：隐藏左侧工具栏与脑图专属面板
-  document.body.classList.toggle("gm-wb-mode", mode === "whiteboard");
-  if (wbBar) wbBar.hidden = mode !== "whiteboard";
+  // 白板 / 流程图模式切换 body 类：隐藏左侧工具栏与脑图专属面板，启用顶部浮动工具栏
+  document.body.classList.toggle("gm-wb-mode", mode === "whiteboard" || mode === "flowchart");
+  if (wbBar) wbBar.hidden = !(mode === "whiteboard" || mode === "flowchart");
   if (mode === "mindmap") {
     addTool(bar, "plus", "子节点", () => { const sel = [...editor.selection][0]; if (sel) editor.addMindmapChild(sel); else ensureRoot(); });
     addTool(bar, "plus", "兄弟", () => { const sel = [...editor.selection][0]; if (sel) editor.addMindmapSibling(sel); });
     addTool(bar, "trash", "删除", () => editor.deleteSelection());
     addTool(bar, "fit", "布局", () => { layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); });
-  } else if (mode === "flowchart") {
-    for (const s of FLOW_SHAPES) {
-      addTool(bar, s.icon, s.label, () => { const c = editor.viewCenterWorld(); editor.addFlowShape(s.shape, c.x, c.y); });
-    }
-    addTool(bar, "trash", "删除", () => editor.deleteSelection());
+  } else if (mode === "flowchart" && wbBar) {
+    buildFcBar(wbBar);
   } else if (mode === "whiteboard" && wbBar) {
     buildWbBar(wbBar);
   }
   updateHelpKeys();
 }
 
+// 流程图顶部工具栏（图标在上、文字在下，参考 mind-map）
+function buildFcBar(bar) {
+  bar.innerHTML = "";
+  bar.classList.add("gm-fc-bar");
+  let lastGroup = null;
+  for (const t of FC_TOOLS) {
+    const group = t.act.startsWith("shape:") ? 2 : t.act === "undo" || t.act === "redo" ? 1 : 3;
+    if (lastGroup !== null && group !== lastGroup) bar.appendChild(wbSep());
+    lastGroup = group;
+    const b = document.createElement("button");
+    b.className = "gm-fc-btn";
+    b.dataset.act = t.act;
+    b.title = t.key ? `${t.label} (${t.key})` : t.label;
+    b.innerHTML = `${ICONS[t.icon] || ""}<span class="lbl">${t.label}</span>`;
+    b.addEventListener("click", () => onFcAction(t.act));
+    bar.appendChild(b);
+  }
+  refreshFcActive();
+}
+function onFcAction(act) {
+  if (act === "undo") { editor.undo(); return; }
+  if (act === "redo") { editor.redo(); return; }
+  if (act === "delete") { editor.deleteSelection(); return; }
+  if (act === "image") { document.getElementById("wbImageFile").click(); return; }
+  if (act === "link") {
+    editor.setTool(editor.tool === "link" ? "select" : "link");
+    refreshFcActive();
+    if (editor.tool === "link") toast("关联线：先点起始节点，再点目标节点", "info");
+    return;
+  }
+  if (act.startsWith("shape:")) {
+    const c = editor.viewCenterWorld();
+    editor.addFlowShape(act.slice(6), c.x, c.y);
+    editor.setTool("select");
+    refreshFcActive();
+  }
+}
+function refreshFcActive() {
+  document.querySelectorAll("#wbBar .gm-fc-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.act === "link" && editor.tool === "link");
+  });
+}
+
 // 白板浮动工具栏（画布顶部居中，类 Excalidraw）
 function buildWbBar(bar) {
   bar.innerHTML = "";
+  bar.classList.remove("gm-fc-bar");
   let lastGroup = null;
   for (const t of WB_TOOLS) {
     if (lastGroup !== null && t.group !== lastGroup) bar.appendChild(wbSep());
@@ -284,6 +325,16 @@ function updateHelpKeys() {
       `删除：Delete / Backspace<br/>` +
       `撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y<br/>` +
       `平移：拖空白处 / 抓手 · 缩放：滚轮<br/>` +
+      `保存：Ctrl/⌘ + S`;
+  } else if (editor.mode === "flowchart") {
+    el.innerHTML =
+      `矩形 1 · 圆角 2 · 判断 3<br/>` +
+      `椭圆 4 · 平行四边形 5 · 文本 6<br/>` +
+      `图片 7 · 关联线 L（点起点再点目标）<br/>` +
+      `连线：拖节点上下端口到目标节点<br/>` +
+      `删除：Delete / Backspace<br/>` +
+      `撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y<br/>` +
+      `平移：拖空白处 · 缩放：滚轮<br/>` +
       `保存：Ctrl/⌘ + S`;
   } else {
     el.innerHTML =
@@ -434,6 +485,12 @@ function wireKeys() {
       return;
     }
     if (e.key === "Enter" && editor.mode === "mindmap") { e.preventDefault(); const sel = [...editor.selection][0]; if (sel) editor.addMindmapSibling(sel); return; }
+    // 流程图工具快捷键（1-6 图形 / 7 图片 / L 关联线）
+    if (editor.mode === "flowchart") {
+      const fcKeys = { "1": "shape:rect", "2": "shape:rounded", "3": "shape:diamond", "4": "shape:ellipse", "5": "shape:parallelogram", "6": "shape:text", "7": "image", l: "link" };
+      const act = fcKeys[e.key.toLowerCase()];
+      if (act) { e.preventDefault(); onFcAction(act); return; }
+    }
     // 白板工具快捷键（V/H/F/2/3/4/5/6/7/8/9/0/K）
     if (editor.mode === "whiteboard") {
       const wbKeys = { v: "select", h: "hand", f: "frame", "2": "rect", "3": "diamond", "4": "ellipse", "5": "arrow", "6": "line", "7": "pen", "8": "text", "9": "image", "0": "eraser", k: "laser" };

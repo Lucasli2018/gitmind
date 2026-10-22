@@ -425,6 +425,25 @@ export class Editor {
       return;
     }
 
+    // ---------- 流程图关联线工具：点击起点节点 -> 点击目标节点建立连线 ----------
+    if (this.mode === "flowchart" && this.tool === "link") {
+      const hitEl = target.closest && target.closest("[data-id]");
+      const id = hitEl ? hitEl.getAttribute("data-id") : null;
+      if (!this._linkFrom) {
+        if (id) { this._linkFrom = id; this.selection = new Set([id]); this.render(); }
+      } else {
+        if (id && id !== this._linkFrom) {
+          this.addEdge(this._linkFrom, id);
+          this.onChange();
+          this.pushHistory();
+        }
+        this._linkFrom = null;
+        this.selection.clear();
+        this.render();
+      }
+      return;
+    }
+
     // ---------- 白板各工具 ----------
     if (this.mode === "whiteboard") {
       const w = this.toWorld(e.clientX, e.clientY);
@@ -646,9 +665,16 @@ export class Editor {
   }
 
   addFlowShape(shape, wx, wy) {
-    const dims = { rect: [140, 50], diamond: [150, 92], ellipse: [130, 64], parallelogram: [150, 64], rounded: [140, 50] }[shape] || [140, 50];
+    const dims = { rect: [140, 50], diamond: [150, 92], ellipse: [130, 64], parallelogram: [150, 64], rounded: [140, 50], text: [240, 44] }[shape] || [140, 50];
     const id = newId();
-    const node = { id, x: wx - dims[0] / 2, y: wy - dims[1] / 2, w: dims[0], h: dims[1], text: shape === "diamond" ? "判断?" : "文本", shape, color: "#fff", textColor: "#1f2a37", stroke: "#2f80ed", fontSize: 14, parentId: null, collapsed: false };
+    const isText = shape === "text";
+    const node = {
+      id, x: wx - dims[0] / 2, y: wy - dims[1] / 2, w: dims[0], h: dims[1],
+      text: isText ? "双击编辑文本" : shape === "diamond" ? "判断?" : "文本",
+      shape, color: isText ? "transparent" : "#fff",
+      textColor: "#1f2a37", stroke: isText ? "transparent" : "#2f80ed",
+      fontSize: isText ? 18 : 14, parentId: null, collapsed: false,
+    };
     this.doc.nodes.push(node);
     this.selection = new Set([id]);
     this.render(); this.onChange();
@@ -671,6 +697,7 @@ export class Editor {
 
   setTool(tool) {
     this.tool = tool;
+    this._linkFrom = null; // 切换工具时放弃未完成的关联线
     if (tool === "select" || tool === "hand") this.container.style.cursor = "default";
     else if (tool === "laser") this.container.style.cursor = "crosshair";
     else this.container.style.cursor = "crosshair";

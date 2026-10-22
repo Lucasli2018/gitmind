@@ -27,6 +27,7 @@ export const ICONS = {
   sticky: S(`<path d="M4 4h16v12l-4 4H4z"/><path d="M16 20v-4h4"/>`),
   pen: S(`<path d="M3 21l3-1 11-11-2-2L4 18z"/><path d="M14 6l3-3 2 2-3 3"/>`),
   rect: S(`<rect x="4" y="6" width="16" height="12" rx="1"/>`),
+  rounded: S(`<rect x="4" y="6" width="16" height="12" rx="5"/>`),
   diamond: S(`<path d="M12 3l9 9-9 9-9-9z"/>`),
   ellipse: S(`<ellipse cx="12" cy="12" rx="9" ry="6"/>`),
   arrow: S(`<path d="M4 12h14M13 6l6 6-6 6"/>`),

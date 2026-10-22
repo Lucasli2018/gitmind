@@ -166,6 +166,18 @@ body.gm-wb-mode #outlineBtn { display: none; }
 .gm-wb-more .pop button svg { width: 18px; height: 18px; }
 .gm-wb-more .pop button .kbd { margin-left: auto; font-size: 11px; color: #9aa4b2; }
 
+/* 流程图顶部工具栏按钮：图标在上、文字在下（参考 mind-map） */
+.gm-wb-bar.gm-fc-bar { gap: 4px; padding: 6px 10px; }
+.gm-fc-btn {
+  width: 56px; height: 50px; border: none; background: transparent; border-radius: 10px;
+  color: #4b5563; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; cursor: pointer; flex: 0 0 auto; transition: background .12s, color .12s; padding: 4px 2px;
+}
+.gm-fc-btn svg { width: 19px; height: 19px; }
+.gm-fc-btn .lbl { font-size: 11px; line-height: 1; white-space: nowrap; }
+.gm-fc-btn:hover { background: #eef2f6; color: #1f2a37; }
+.gm-fc-btn.active { background: #e6f7f4; color: #0b7d73; }
+
 /* ===================== 移动端适配（≤820px） ===================== */
 @media (max-width: 820px) {
   .gm-topbar { height: 52px; padding: 0 10px; gap: 8px; }
