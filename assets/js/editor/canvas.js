@@ -22,6 +22,9 @@ export class Editor {
     this.toolColor = "#1f2a37";
     // 白板图形默认属性（属性面板数据源）：描边/背景/宽度/边框样式/线条风格/边角/透明度
     this.wbProps = { stroke: "#1f2a37", fill: "#ffffff", strokeWidth: 2, strokeStyle: "solid", roughness: 0, rounded: true, opacity: 1 };
+    // 网格显示（右键菜单切换，localStorage 记忆）
+    this.showGrid = false;
+    try { this.showGrid = localStorage.getItem("gm_wb_grid") === "1"; } catch (_) {}
     this._onSelectionChange = opts.onSelectionChange || null;
     this._newShape = null; this._erasing = false; this._laser = null; this._laserRaf = null;
     this._marquee = null; this._laserDown = false;
@@ -190,6 +193,8 @@ export class Editor {
     for (const n of this.doc.nodes) this.sizes.set(n.id, sizeOf(n, this.doc.type));
 
     let html = "";
+    // 白板网格（不进导出）
+    if (this.showGrid && !this._forExport) html += this.gridHTML();
     // 边（脑图模式按 parentId 派生连线，保证父子之间始终有线）
     let edges = this.doc.edges;
     if (this.doc.type === "mindmap") {
@@ -886,6 +891,49 @@ export class Editor {
   _nextFrameName() {
     const n = this.doc.nodes.filter((x) => x.shape === "frame").length + 1;
     return `Frame ${n}`;
+  }
+
+  // ---------- 网格 / 图层 ----------
+  toggleGrid() {
+    this.showGrid = !this.showGrid;
+    try { localStorage.setItem("gm_wb_grid", this.showGrid ? "1" : "0"); } catch (_) {}
+    this.render();
+    return this.showGrid;
+  }
+  // 背景网格线（随视图平移缩放，40 世界单位间距）
+  gridHTML() {
+    const r = this.rect();
+    const s = this.view.scale || 1;
+    const x0 = -this.view.x / s, y0 = -this.view.y / s;
+    const x1 = (r.width - this.view.x) / s, y1 = (r.height - this.view.y) / s;
+    const step = 40, sw = 1 / s;
+    let out = `<g stroke="#e9edf3" stroke-width="${sw}">`;
+    for (let x = Math.floor(x0 / step) * step; x <= x1; x += step) out += `<line x1="${x}" y1="${y0}" x2="${x}" y2="${y1}"/>`;
+    for (let y = Math.floor(y0 / step) * step; y <= y1; y += step) out += `<line x1="${x0}" y1="${y}" x2="${x1}" y2="${y}"/>`;
+    return out + "</g>";
+  }
+  // 图层排序：doc.nodes 数组顺序即 z 序（越靠后越在上层）
+  // mode: front 置顶 / back 置底 / forward 上移一层 / backward 下移一层
+  _reorderLayer(mode) {
+    const sel = new Set(this.selection);
+    if (!sel.size || this.doc.nodes.length < 2) return;
+    const nodes = this.doc.nodes;
+    if (mode === "front" || mode === "back") {
+      const selNodes = nodes.filter((n) => sel.has(n.id));
+      const rest = nodes.filter((n) => !sel.has(n.id));
+      this.doc.nodes = mode === "front" ? [...rest, ...selNodes] : [...selNodes, ...rest];
+    } else if (mode === "forward") {
+      for (let i = nodes.length - 2; i >= 0; i--) {
+        if (sel.has(nodes[i].id) && !sel.has(nodes[i + 1].id)) { const t = nodes[i]; nodes[i] = nodes[i + 1]; nodes[i + 1] = t; }
+      }
+    } else if (mode === "backward") {
+      for (let i = 1; i < nodes.length; i++) {
+        if (sel.has(nodes[i].id) && !sel.has(nodes[i - 1].id)) { const t = nodes[i]; nodes[i] = nodes[i - 1]; nodes[i - 1] = t; }
+      }
+    }
+    this.render();
+    this.onChange();
+    this.pushHistory();
   }
 
   // ---------- 框选 ----------

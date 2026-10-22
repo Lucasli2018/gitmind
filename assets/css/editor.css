@@ -173,6 +173,22 @@ body.gm-wb-mode #outlineBtn { display: none; }
 @media (max-width: 760px) {
   .gm-wb-style { top: auto; bottom: 14px; left: 10px; width: 172px; max-height: 46%; }
 }
+
+/* 白板右键菜单 */
+.gm-ctx-menu {
+  position: fixed; z-index: 200; min-width: 200px; padding: 6px;
+  background: #fff; border: 1px solid #e8ecf1; border-radius: 12px;
+  box-shadow: 0 10px 32px rgba(16,30,54,.16);
+  display: flex; flex-direction: column;
+}
+.gm-ctx-menu button {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  width: 100%; border: none; background: transparent; cursor: pointer;
+  padding: 8px 12px; border-radius: 8px; font-size: 13.5px; color: #1f2a37; text-align: left;
+}
+.gm-ctx-menu button:hover { background: #eef2f6; }
+.gm-ctx-menu button .kbd { font-size: 11px; color: #9aa4b2; }
+.gm-ctx-sep { height: 1px; background: #eef1f5; margin: 5px 8px; }
 .gm-wb-btn {
   position: relative; width: 38px; height: 38px; border: none; background: transparent;
   border-radius: 10px; color: #4b5563; display: flex; align-items: center; justify-content: center;

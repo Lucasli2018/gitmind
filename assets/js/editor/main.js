@@ -5,7 +5,7 @@ import { Editor } from "./canvas.js";
 import { FC_TOOLS } from "./flowchart.js";
 import { WB_TOOLS, WB_MORE, WB_COLORS } from "./whiteboard.js";
 import { openOutline } from "./outline.js";
-import { exportSVG, exportPNG, exportJSON, importJSON } from "./export.js";
+import { exportSVG, exportPNG, exportJSON, importJSON, getExportSVG } from "./export.js";
 import { layoutMindmap } from "./mindmap.js";
 import { newId } from "./model.js";
 
@@ -348,7 +348,14 @@ function refreshWbStylePanel() {
       `<button class="gm-ws-seg${!p.rounded ? " active" : ""}" data-k="rounded" data-v="false" title="直角"><svg width="18" height="14"><path d="M3,13 L3,3 L13,3" fill="none" stroke="#1f2a37" stroke-width="2" stroke-linecap="round"/></svg></button>` +
     `</div>` +
     `<div class="gm-ws-t">透明度 <span class="gm-ws-val">${Math.round(p.opacity * 100)}%</span></div>` +
-    `<input type="range" class="gm-ws-range" min="10" max="100" step="5" value="${Math.round(p.opacity * 100)}" />`;
+    `<input type="range" class="gm-ws-range" min="10" max="100" step="5" value="${Math.round(p.opacity * 100)}" />` +
+    `<div class="gm-ws-t">图层</div>` +
+    `<div class="gm-ws-row seg">` +
+      `<button class="gm-ws-seg" data-layer="front" title="置于顶层"><svg width="16" height="16"><path d="M8,1 L11,5 L5,5 Z" fill="#1f2a37"/><rect x="4" y="8" width="8" height="6" rx="1.5" fill="none" stroke="#1f2a37" stroke-width="1.6"/></svg></button>` +
+      `<button class="gm-ws-seg" data-layer="forward" title="上移一层"><svg width="16" height="16"><path d="M4,10 L8,5 L12,10" fill="none" stroke="#1f2a37" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="12" width="8" height="2.5" rx="1" fill="#1f2a37"/></svg></button>` +
+      `<button class="gm-ws-seg" data-layer="backward" title="下移一层"><svg width="16" height="16"><path d="M4,6 L8,11 L12,6" fill="none" stroke="#1f2a37" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="1.5" width="8" height="2.5" rx="1" fill="#1f2a37"/></svg></button>` +
+      `<button class="gm-ws-seg" data-layer="back" title="置于底层"><svg width="16" height="16"><rect x="4" y="2" width="8" height="6" rx="1.5" fill="none" stroke="#1f2a37" stroke-width="1.6"/><path d="M8,15 L5,11 L11,11 Z" fill="#1f2a37"/></svg></button>` +
+    `</div>`;
   // 属性修改事件（含透明度滑杆：拖动实时预览不记历史，松手落一次历史）
   panel.querySelectorAll("[data-k]").forEach((b) => {
     b.addEventListener("click", () => {
@@ -359,6 +366,10 @@ function refreshWbStylePanel() {
       if (k === "stroke") refreshWbActive(); // 同步顶栏色板高亮
     });
   });
+  // 图层排序按钮
+  panel.querySelectorAll("[data-layer]").forEach((b) => {
+    b.addEventListener("click", () => { editor._reorderLayer(b.dataset.layer); refreshWbStylePanel(); });
+  });
   const range = panel.querySelector(".gm-ws-range");
   if (range) {
     range.addEventListener("input", () => {
@@ -367,6 +378,146 @@ function refreshWbStylePanel() {
     });
     range.addEventListener("change", () => editor.setWbProps({ opacity: Number(range.value) / 100 }, true));
   }
+}
+
+// ---------- 白板右键菜单 ----------
+let wbClipboard = [];   // 白板内部剪贴板（节点深拷贝）
+let wbMenuPos = null;   // 最近一次右键位置（屏幕坐标），粘贴到鼠标处用
+
+function wireWbContextMenu() {
+  editor.container.addEventListener("contextmenu", (e) => {
+    if (editor.mode !== "whiteboard") return;
+    e.preventDefault();
+    wbMenuPos = { x: e.clientX, y: e.clientY };
+    // 右键命中节点：纳入选中（不在多选内则单选）
+    const hit = e.target.closest && e.target.closest("[data-id]");
+    if (hit) {
+      const id = hit.getAttribute("data-id");
+      if (!editor.selection.has(id)) editor.selection = new Set([id]);
+      editor.render();
+    } else {
+      editor.clearSelection();
+    }
+    showWbMenu(e.clientX, e.clientY);
+  });
+  // 点击其他区域 / 滚动 / 失焦关闭
+  window.addEventListener("pointerdown", (e) => { if (!e.target.closest || !e.target.closest(".gm-ctx-menu")) hideWbMenu(); }, true);
+  window.addEventListener("wheel", hideWbMenu, { passive: true });
+  window.addEventListener("blur", hideWbMenu);
+  window.addEventListener("keydown", (e) => { if (e.key === "Escape") hideWbMenu(); });
+}
+function hideWbMenu() {
+  const m = document.querySelector(".gm-ctx-menu");
+  if (m) m.remove();
+}
+function showWbMenu(x, y) {
+  hideWbMenu();
+  const hasSel = editor.selection.size > 0;
+  const items = [];
+  if (wbClipboard.length) items.push({ label: "粘贴", kbd: "Ctrl+V", act: () => pasteWbClipboard() });
+  if (hasSel) items.push({ label: "复制", kbd: "Ctrl+C", act: copyWbSelection });
+  items.push({ label: "复制为 PNG 到剪贴板", kbd: "Shift+Alt+C", act: () => copyWbExport(true) });
+  items.push({ label: "复制为 SVG 到剪贴板", act: () => copyWbExport(false) });
+  items.push({ sep: true });
+  items.push({ label: "全部选中", kbd: "Ctrl+A", keep: true, act: wbSelectAll });
+  items.push({ label: (editor.showGrid ? "✓ " : "") + "显示网格", kbd: "Ctrl+'", keep: true, act: () => editor.toggleGrid() });
+  if (hasSel) {
+    items.push({ sep: true });
+    items.push({ label: "置于顶层", act: () => editor._reorderLayer("front") });
+    items.push({ label: "置于底层", act: () => editor._reorderLayer("back") });
+    items.push({ label: "删除", kbd: "Del", act: () => editor.deleteSelection() });
+  }
+  items.push({ sep: true });
+  items.push({ label: "详细统计信息", kbd: "Alt+/", act: wbStats });
+  const menu = document.createElement("div");
+  menu.className = "gm-ctx-menu";
+  for (const it of items) {
+    if (it.sep) { const s = document.createElement("div"); s.className = "gm-ctx-sep"; menu.appendChild(s); continue; }
+    const b = document.createElement("button");
+    b.innerHTML = `<span class="lbl">${it.label}</span>${it.kbd ? `<span class="kbd">${it.kbd}</span>` : ""}`;
+    b.addEventListener("click", () => { it.act(); if (it.keep) showWbMenu(x, y); else hideWbMenu(); });
+    menu.appendChild(b);
+  }
+  document.body.appendChild(menu);
+  // 视口边界修正
+  const r = menu.getBoundingClientRect();
+  menu.style.left = Math.max(6, Math.min(x, window.innerWidth - r.width - 8)) + "px";
+  menu.style.top = Math.max(6, Math.min(y, window.innerHeight - r.height - 8)) + "px";
+}
+function wbSelectAll() {
+  editor.selection = new Set(editor.doc.nodes.map((n) => n.id));
+  editor.render();
+}
+function copyWbSelection() {
+  const sel = new Set(editor.selection);
+  wbClipboard = editor.doc.nodes.filter((n) => sel.has(n.id)).map((n) => JSON.parse(JSON.stringify(n)));
+  if (wbClipboard.length) toast(`已复制 ${wbClipboard.length} 个图形`, "info");
+}
+function pasteWbClipboard() {
+  if (!wbClipboard.length) return;
+  // 有右键位置时贴到鼠标处，否则右下偏移 24
+  let minX = Infinity, minY = Infinity;
+  for (const n of wbClipboard) { minX = Math.min(minX, n.x); minY = Math.min(minY, n.y); }
+  const world = wbMenuPos ? editor.toWorld(wbMenuPos.x, wbMenuPos.y) : null;
+  const pasted = wbClipboard.map((n) => {
+    const c = JSON.parse(JSON.stringify(n));
+    c.id = crypto.randomUUID ? crypto.randomUUID() : "n" + Math.random().toString(36).slice(2);
+    c.x = world ? world.x + (n.x - minX) : n.x + 24;
+    c.y = world ? world.y + (n.y - minY) : n.y + 24;
+    return c;
+  });
+  editor.doc.nodes.push(...pasted);
+  editor.selection = new Set(pasted.map((n) => n.id));
+  editor.render(); editor.onChange(); editor.pushHistory();
+  toast(`已粘贴 ${pasted.length} 个图形`, "info");
+}
+// 导出当前选择（无选择则导出整块画布）为 SVG 字符串
+function wbExportSVG() {
+  if (!editor.selection.size) return getExportSVG(editor);
+  const doc = editor.doc;
+  const sel = new Set(editor.selection);
+  const clone = { ...doc, nodes: doc.nodes.filter((n) => sel.has(n.id)), strokes: [], edges: doc.edges.filter((e) => sel.has(e.from) && sel.has(e.to)) };
+  editor.doc = clone;
+  const r = getExportSVG(editor);
+  editor.doc = doc;
+  editor.render();
+  return r;
+}
+async function copyWbExport(asPng) {
+  const r = wbExportSVG();
+  if (!r) { toast("画布为空", "error"); return; }
+  try {
+    if (asPng) {
+      const svgBlob = new Blob([r.svg], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+      const scale = 2;
+      const canvas = document.createElement("canvas");
+      canvas.width = r.w * scale; canvas.height = r.h * scale;
+      const ctx = canvas.getContext("2d");
+      ctx.scale(scale, scale);
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      const pngBlob = await new Promise((res) => canvas.toBlob(res, "image/png"));
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
+    } else {
+      const svgBlob = new Blob([r.svg], { type: "image/svg+xml;charset=utf-8" });
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ "image/svg+xml": svgBlob })]);
+      } catch (_) {
+        await navigator.clipboard.writeText(r.svg); // SVG 写入不被支持时降级为文本
+      }
+    }
+    toast("已复制到剪贴板", "info");
+  } catch (e) {
+    toast("复制失败：" + (e.message || e), "error");
+  }
+}
+function wbStats() {
+  const d = editor.doc;
+  const bytes = JSON.stringify(d).length;
+  alert(`白板统计\n\n图形节点：${d.nodes.length} 个\n画笔笔画：${d.strokes.length} 笔\n连线：${d.edges.length} 条\n文档 JSON：${(bytes / 1024).toFixed(1)} KB`);
 }
 
 // 帮助面板按模式显示对应快捷键
@@ -554,6 +705,13 @@ function wireKeys() {
       const wbKeys = { v: "select", "1": "select", h: "hand", f: "frame", "2": "rect", "3": "diamond", "4": "ellipse", "5": "arrow", "6": "line", "7": "pen", "8": "text", "9": "image", "0": "eraser", k: "laser" };
       const tool = wbKeys[e.key.toLowerCase()];
       if (tool) { e.preventDefault(); onWbTool(tool); return; }
+      // 白板剪贴板 / 全选 / 网格 / 复制导出 / 统计
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") { e.preventDefault(); copyWbSelection(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") { e.preventDefault(); pasteWbClipboard(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") { e.preventDefault(); wbSelectAll(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key === "'") { e.preventDefault(); editor.toggleGrid(); return; }
+      if (e.shiftKey && e.altKey && e.key.toLowerCase() === "c") { e.preventDefault(); copyWbExport(true); return; }
+      if (e.altKey && e.key === "/") { e.preventDefault(); wbStats(); return; }
     }
     if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); editor.deleteSelection(); return; }
     if (e.key === "Escape") editor.clearSelection();
@@ -578,6 +736,7 @@ function wireKeys() {
   document.getElementById("shareBtn").textContent = map.is_public ? "已分享" : "分享";
 
   editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), mode: map.type || "mindmap" });
+  wireWbContextMenu();
   editor.load(map.data);
   dirty = false; // 初始加载触发的 onChange 不算脏，避免无谓落盘
   lastSavedAt = map.updated_at || Date.now();
