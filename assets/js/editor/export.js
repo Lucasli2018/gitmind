@@ -66,7 +66,31 @@ export function importJSON(editor, file, onChange) {
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      const doc = JSON.parse(reader.result);
+      let doc = JSON.parse(reader.result);
+      if (!doc || typeof doc !== "object") throw new Error("格式不正确");
+      // 兼容 simple-mind-map（mind-map 项目）导出格式：树形 root/children -> 平铺 nodes
+      if (!Array.isArray(doc.nodes) && doc.root && typeof doc.root === "object") {
+        const nodes = [];
+        const walk = (item, parentId, isRoot) => {
+          const d = (item && item.data) || {};
+          const id = d.uid || (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
+          nodes.push({
+            id, x: 0, y: 0, w: isRoot ? 156 : 124, h: isRoot ? 56 : 44,
+            text: String(d.text || "节点").replace(/<[^>]+>/g, "").trim() || "节点",
+            shape: "rounded",
+            color: isRoot ? "#11b5a4" : "#fff",
+            textColor: isRoot ? "#ffffff" : "#1f2a37",
+            stroke: isRoot ? "#11b5a4" : "#2f80ed",
+            fontSize: isRoot ? 17 : 15,
+            parentId: parentId || null,
+            collapsed: d.expand === false,
+          });
+          for (const c of Array.isArray(item.children) ? item.children : []) walk(c, id, false);
+        };
+        walk(doc.root, null, true);
+        const LAYOUTS = { logicalStructure: "logicRight", logicalStructureLeft: "logicLeft", mindMap: "mindmap", organizationStructure: "structure", catalogOrganization: "list" };
+        doc = { type: "mindmap", nodes, edges: [], strokes: [], view: { x: 0, y: 0, scale: 1 }, layout: LAYOUTS[doc.layout] || "logicRight" };
+      }
       if (!doc || !Array.isArray(doc.nodes)) throw new Error("格式不正确");
       doc.type = doc.type || "mindmap";
       doc.edges = doc.edges || [];

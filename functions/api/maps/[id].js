@@ -3,6 +3,7 @@
 // DELETE /api/maps/:id  -> 删除（仅 owner）
 import { json, parseUser } from "../_shared.js";
 import { getMapData, putMapData, deleteMapData } from "../_store.js";
+import { normalizeDoc } from "../_convert.js";
 
 export async function onRequestGet({ request, env, params }) {
   const row = await env.DB.prepare("SELECT * FROM gm_maps WHERE id=?").bind(params.id).first();
@@ -12,6 +13,16 @@ export async function onRequestGet({ request, env, params }) {
   let data = {};
   const raw = await getMapData(env, params.id, row.r2_key);
   try { data = JSON.parse(raw || "{}"); } catch (_) {}
+  // 兼容层：simple-mind-map 格式（R2 早期快照）自动转换为原生格式，并回写主存储自愈
+  const norm = normalizeDoc(data);
+  if (norm.converted) {
+    data = norm.doc;
+    try {
+      await putMapData(env, params.id, JSON.stringify(data), row.user_id);
+    } catch (e) {
+      console.error("[map] 转换后回写失败(忽略):", e?.message || e);
+    }
+  }
   return json({
     map: {
       id: row.id, title: row.title, type: row.type, data,
