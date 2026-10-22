@@ -1,7 +1,7 @@
 // 白板模式：工具描述（main 据此构建浮动工具栏）
 // group 用于分组渲染，more: true 表示收进「…」更多菜单
 export const WB_TOOLS = [
-  { tool: "select", label: "选择", key: "V", icon: "cursor", group: 1 },
+  { tool: "select", label: "选择", key: "1", icon: "cursor", group: 1 },
   { tool: "hand", label: "抓手", key: "H", icon: "hand", group: 1 },
 
   { tool: "frame", label: "画框", key: "F", icon: "frame", group: 2 },

@@ -317,7 +317,7 @@ function updateHelpKeys() {
   if (!el) return;
   if (editor.mode === "whiteboard") {
     el.innerHTML =
-      `选择 V · 抓手 H · 画框 F<br/>` +
+      `选择 1/V · 抓手 H · 画框 F<br/>` +
       `矩形 2 · 菱形 3 · 圆 4<br/>` +
       `箭头 5 · 直线 6 · 画笔 7<br/>` +
       `文字 8 · 图片 9 · 橡皮 0 · 激光笔 K<br/>` +
@@ -491,9 +491,9 @@ function wireKeys() {
       const act = fcKeys[e.key.toLowerCase()];
       if (act) { e.preventDefault(); onFcAction(act); return; }
     }
-    // 白板工具快捷键（V/H/F/2/3/4/5/6/7/8/9/0/K）
+    // 白板工具快捷键（1/V 选择 · H 抓手 · F 画框 · 2-0 图形 · K 激光笔）
     if (editor.mode === "whiteboard") {
-      const wbKeys = { v: "select", h: "hand", f: "frame", "2": "rect", "3": "diamond", "4": "ellipse", "5": "arrow", "6": "line", "7": "pen", "8": "text", "9": "image", "0": "eraser", k: "laser" };
+      const wbKeys = { v: "select", "1": "select", h: "hand", f: "frame", "2": "rect", "3": "diamond", "4": "ellipse", "5": "arrow", "6": "line", "7": "pen", "8": "text", "9": "image", "0": "eraser", k: "laser" };
       const tool = wbKeys[e.key.toLowerCase()];
       if (tool) { e.preventDefault(); onWbTool(tool); return; }
     }
@@ -519,7 +519,7 @@ function wireKeys() {
   document.getElementById("titleInput").value = map.title || "未命名导图";
   document.getElementById("shareBtn").textContent = map.is_public ? "已分享" : "分享";
 
-  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, mode: map.type || "mindmap" });
+  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => refreshWbActive(), mode: map.type || "mindmap" });
   editor.load(map.data);
   dirty = false; // 初始加载触发的 onChange 不算脏，避免无谓落盘
   lastSavedAt = map.updated_at || Date.now();

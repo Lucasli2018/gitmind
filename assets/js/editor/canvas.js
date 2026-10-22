@@ -21,6 +21,8 @@ export class Editor {
     // 白板扩展状态：图形拖拽创建 / 橡皮 / 激光笔 / 当前描边色
     this.toolColor = "#1f2a37";
     this._newShape = null; this._erasing = false; this._laser = null; this._laserRaf = null;
+    this._marquee = null; this._laserDown = false;
+    this._onToolChange = opts.onToolChange || null;
     // 撤销/重做历史栈（快照式，仅存数据不含视图）
     this._history = []; this._hidx = -1; this._restoring = false;
     this._updateUndoRedoButtons = opts.onUndoRedoState || null;
@@ -67,7 +69,7 @@ export class Editor {
     };
     // 进入双指模式，放弃单指已开始的操作，避免冲突
     this._drag = null; this._pan = null; this._connect = null; this._stroke = null;
-    this._newShape = null; this._erasing = false;
+    this._newShape = null; this._erasing = false; this._marquee = null; this._laserDown = false;
   }
   onTouchMove(e) {
     if (!this._pinch || e.touches.length !== 2) return;
@@ -199,6 +201,8 @@ export class Editor {
     if (this._stroke) html += this.strokeHTML(this._stroke);
     // 白板：拖拽创建中的临时图形
     if (this._newShape) html += this.tempShapeHTML();
+    // 白板：框选矩形
+    if (this._marquee) html += this.marqueeHTML();
     // 节点
     for (const n of this.doc.nodes) html += this.nodeHTML(n, this.selection.has(n.id));
     // 临时连线
@@ -456,6 +460,7 @@ export class Editor {
           return;
         }
         case "laser":
+          this._laserDown = true;
           this._laser = { pts: [{ x: w.x, y: w.y, t: performance.now() }] };
           this._startLaserLoop();
           return;
@@ -492,7 +497,14 @@ export class Editor {
       this._drag = { sx, sy, moved: false, orig, movable };
       return;
     }
-    // 空白：平移
+    // 空白：白板选择工具下拖拽框选多个元素；其他模式 / 抓手平移
+    if (this.mode === "whiteboard" && this.tool === "select") {
+      if (!e.shiftKey) this.clearSelection();
+      const w = this.toWorld(e.clientX, e.clientY);
+      this._marquee = { x0: w.x, y0: w.y, x1: w.x, y1: w.y, base: e.shiftKey ? new Set(this.selection) : new Set() };
+      this.render();
+      return;
+    }
     if (!e.shiftKey) this.clearSelection();
     this._pan = { sx, sy, ox: this.view.x, oy: this.view.y };
   }
@@ -520,13 +532,20 @@ export class Editor {
       return;
     }
     if (this._erasing) { this.eraseAt(this.toWorld(e.clientX, e.clientY)); return; }
-    if (this._laser) {
+    if (this._laser && this._laserDown) {
       this._laser.pts.push({ x: this.toWorld(e.clientX, e.clientY).x, y: this.toWorld(e.clientX, e.clientY).y, t: performance.now() });
       this._startLaserLoop();
       this.render();
       return;
     }
     if (this._connect) { this._connect.cx = e.clientX; this._connect.cy = e.clientY; this.render(); return; }
+    if (this._marquee) {
+      const w = this.toWorld(e.clientX, e.clientY);
+      this._marquee.x1 = w.x; this._marquee.y1 = w.y;
+      this.applyMarquee(); // 实时高亮框内元素
+      this.render();
+      return;
+    }
     if (this._drag) {
       const r = this.rect();
       const dx = (e.clientX - r.left - this._drag.sx) / this.view.scale;
@@ -548,9 +567,10 @@ export class Editor {
   }
 
   onUp(e) {
+    if (this._marquee) { this._marquee = null; this.render(); return; } // 选择已在拖拽中实时应用
     if (this._newShape) { this.finishNewShape(); return; }
     if (this._erasing) { this._erasing = false; if (this._erased) { this.onChange(); this.pushHistory(); } this._erased = false; return; }
-    if (this._laser) { this._startLaserLoop(); return; } // 轨迹交给淡出循环清理
+    if (this._laser) { this._laserDown = false; this._startLaserLoop(); return; } // 松开即停止绘制，轨迹交给淡出循环清理
     if (this._stroke) {
       if (this._stroke.points.length > 1) this.doc.strokes.push(this._stroke);
       this._stroke = null; this.render(); this.onChange(); this.pushHistory(); return;
@@ -702,6 +722,7 @@ export class Editor {
     else if (tool === "laser") this.container.style.cursor = "crosshair";
     else this.container.style.cursor = "crosshair";
     if (tool !== "laser") this._laser = null;
+    if (this._onToolChange) this._onToolChange(tool); // 通知工具栏刷新高亮
   }
 
   // ===================== 白板扩展 =====================
@@ -736,6 +757,8 @@ export class Editor {
     this.render();
     this.onChange();
     this.pushHistory();
+    // 用完图形工具自动回到选择工具（除文字编辑即将开始的场景也一样）
+    this.setTool("select");
     // 基础图形创建后直接进入文字编辑，画框不进入
     if (["rect", "diamond", "ellipse"].includes(t.tool)) this.beginTextEdit(node.id);
   }
@@ -743,6 +766,27 @@ export class Editor {
   _nextFrameName() {
     const n = this.doc.nodes.filter((x) => x.shape === "frame").length + 1;
     return `Frame ${n}`;
+  }
+
+  // ---------- 框选 ----------
+  marqueeHTML() {
+    const m = this._marquee;
+    const x = Math.min(m.x0, m.x1), y = Math.min(m.y0, m.y1);
+    const w = Math.abs(m.x1 - m.x0), h = Math.abs(m.y1 - m.y0);
+    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="rgba(47,128,237,0.08)" stroke="#2f80ed" stroke-width="${1 / this.view.scale}" stroke-dasharray="4 3"/>`;
+  }
+
+  // 框选命中：节点包围盒与选框相交即选中（Shift 保留已有选择）
+  applyMarquee() {
+    const m = this._marquee; if (!m) return;
+    const x = Math.min(m.x0, m.x1), y = Math.min(m.y0, m.y1);
+    const w = Math.abs(m.x1 - m.x0), h = Math.abs(m.y1 - m.y0);
+    const hit = new Set(m.base || []);
+    for (const n of this.doc.nodes) {
+      const b = this.nodeBBox(n);
+      if (b.x < x + w && b.x + b.w > x && b.y < y + h && b.y + b.h > y) hit.add(n.id);
+    }
+    this.selection = hit;
   }
 
   // 拖拽创建中的虚线预览
@@ -807,8 +851,9 @@ export class Editor {
   _startLaserLoop() {
     if (this._laserRaf) return;
     const tick = () => {
-      if (!this._laser || !this._laser.pts.length) { this._laserRaf = null; return; }
       const now = performance.now();
+      if (this._laserDown) { this.render(); this._laserRaf = requestAnimationFrame(tick); return; } // 按住期间保持轨迹，只按时间淡出
+      if (!this._laser || !this._laser.pts.length) { this._laserRaf = null; return; }
       if (this._laser.pts.some((p) => now - p.t < 900)) {
         this.render();
         this._laserRaf = requestAnimationFrame(tick);
