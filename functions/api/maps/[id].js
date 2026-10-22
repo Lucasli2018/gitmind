@@ -10,7 +10,7 @@ export async function onRequestGet({ request, env, params }) {
   const u = await parseUser(env, request);
   if (row.user_id !== (u && u.id) && !row.is_public) return json({ error: "无权访问" }, 403);
   let data = {};
-  const raw = await getMapData(env, params.id);
+  const raw = await getMapData(env, params.id, row.r2_key);
   try { data = JSON.parse(raw || "{}"); } catch (_) {}
   return json({
     map: {
@@ -25,7 +25,7 @@ export async function onRequestGet({ request, env, params }) {
 export async function onRequestPut({ request, env, params }) {
   const u = await parseUser(env, request);
   if (!u) return json({ error: "未登录" }, 401);
-  const row = await env.DB.prepare("SELECT user_id FROM gm_maps WHERE id=?").bind(params.id).first();
+  const row = await env.DB.prepare("SELECT user_id, r2_key FROM gm_maps WHERE id=?").bind(params.id).first();
   if (!row) return json({ error: "导图不存在" }, 404);
   if (row.user_id !== u.id) return json({ error: "无权修改" }, 403);
 
@@ -42,7 +42,7 @@ export async function onRequestPut({ request, env, params }) {
   }
   // 内容优先写 R2（R2 不可用时自动兜底 D1 data 列）
   if (body.data !== undefined) {
-    await putMapData(env, params.id, JSON.stringify(body.data));
+    await putMapData(env, params.id, JSON.stringify(body.data), row.user_id);
     // 仅更新内容时也要刷新 updated_at，保证列表排序正确
     if (sets.length === 0) {
       await env.DB.prepare("UPDATE gm_maps SET updated_at=? WHERE id=?").bind(Date.now(), params.id).run();
@@ -54,10 +54,10 @@ export async function onRequestPut({ request, env, params }) {
 export async function onRequestDelete({ request, env, params }) {
   const u = await parseUser(env, request);
   if (!u) return json({ error: "未登录" }, 401);
-  const row = await env.DB.prepare("SELECT user_id FROM gm_maps WHERE id=?").bind(params.id).first();
+  const row = await env.DB.prepare("SELECT user_id, r2_key FROM gm_maps WHERE id=?").bind(params.id).first();
   if (!row) return json({ error: "导图不存在" }, 404);
   if (row.user_id !== u.id) return json({ error: "无权删除" }, 403);
   await env.DB.prepare("DELETE FROM gm_maps WHERE id=?").bind(params.id).run();
-  await deleteMapData(env, params.id);
+  await deleteMapData(env, params.id, row.r2_key);
   return json({ ok: true });
 }

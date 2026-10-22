@@ -19,9 +19,10 @@ const SCHEMA = [
      user_id INTEGER NOT NULL,
      title TEXT NOT NULL DEFAULT '未命名导图',
      type TEXT NOT NULL DEFAULT 'mindmap',
-     data TEXT NOT NULL DEFAULT '{}',
+     data TEXT,
      is_public INTEGER NOT NULL DEFAULT 0,
      storage TEXT NOT NULL DEFAULT 'd1',
+     r2_key TEXT,
      size INTEGER NOT NULL DEFAULT 0,
      created_at INTEGER NOT NULL,
      updated_at INTEGER NOT NULL
@@ -45,7 +46,7 @@ async function ensure(env) {
       for (const sql of SCHEMA) await env.DB.prepare(sql).run();
       console.log("[middleware] 已初始化 gm_ 表");
     } else {
-      // 兼容已部署库：补 storage 列（R2 优先存储标记）+ size 列（文件字节数）
+      // 兼容已部署库：补 storage / r2_key / size 列
       try {
         const cols = await env.DB.prepare("PRAGMA table_info(gm_maps)").all();
         const names = (cols.results || []).map((c) => c.name);
@@ -54,6 +55,12 @@ async function ensure(env) {
             "ALTER TABLE gm_maps ADD COLUMN storage TEXT NOT NULL DEFAULT 'd1'"
           ).run();
           console.log("[middleware] 已为 gm_maps 补 storage 列");
+        }
+        if (!names.includes("r2_key")) {
+          await env.DB.prepare(
+            "ALTER TABLE gm_maps ADD COLUMN r2_key TEXT"
+          ).run();
+          console.log("[middleware] 已为 gm_maps 补 r2_key 列");
         }
         if (!names.includes("size")) {
           await env.DB.prepare(

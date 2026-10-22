@@ -22,9 +22,10 @@ CREATE TABLE IF NOT EXISTS gm_maps (
   user_id    INTEGER NOT NULL,
   title      TEXT NOT NULL DEFAULT '未命名导图',
   type       TEXT NOT NULL DEFAULT 'mindmap',
-  data       TEXT NOT NULL DEFAULT '{}',
+  data       TEXT,
   is_public  INTEGER NOT NULL DEFAULT 0,
   storage    TEXT NOT NULL DEFAULT 'd1',
+  r2_key     TEXT,
   size       INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL

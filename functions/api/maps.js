@@ -28,6 +28,6 @@ export async function onRequestPost({ request, env }) {
     "INSERT INTO gm_maps(id,user_id,title,type,data,is_public,storage,created_at,updated_at) VALUES(?,?,?,?,?,0,'d1',?,?)"
   ).bind(id, u.id, title, type, data, now, now).run();
   // 内容优先写 R2（R2 不可用时自动兜底 D1）
-  await putMapData(env, id, data);
+  await putMapData(env, id, data, u.id);
   return json({ map: { id, title, type, is_public: 0, created_at: now, updated_at: now } });
 }
