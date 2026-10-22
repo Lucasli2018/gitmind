@@ -17,7 +17,7 @@
 
 ### 通用能力
 - 👤 **账号体系**：邮箱注册 / 登录（PBKDF2 口令哈希 + HttpOnly Cookie 会话，`gm_sid`）
-- ☁️ **云端存储**：Cloudflare D1（共享 `dev` 库，表前缀 `gm_`）+ R2 对象存储——导图内容优先存 R2（对象 Content-Type 统一为 `application/json; charset=utf-8`，key 格式 `maps/<用户ID>/<导图ID>.json`），`gm_maps.data` 置 NULL 不冗余；R2 不可用时自动回退 D1 `data` 列兜底，读取按 `r2_key` → 旧格式 key → D1 三级回退
+- ☁️ **云端存储**：Cloudflare D1（共享 `dev` 库，表前缀 `gm_`）+ R2 对象存储——导图内容优先存 R2（对象 Content-Type 统一为 `application/json; charset=utf-8`，⚠️ 必须用 `httpMetadata.contentType` 传参——R2 put 不支持 Blob 式 `{ type }` 选项，会被静默忽略导致对象无类型被当作 text/plain；key 格式 `maps/<用户ID>/<导图ID>.json`），`gm_maps.data` 置 NULL 不冗余；R2 不可用时自动回退 D1 `data` 列兜底，读取按 `r2_key` → 旧格式 key → D1 三级回退
 - 💾 **保存状态与文件大小**：顶栏显示「已保存 09:39 · 12.3 KB」，浏览列表与分享页同样展示文件大小（`gm_maps.size` 落库）
 - 🔄 **格式兼容**：自动识别并转换 simple-mind-map（mind-map 项目）格式的旧快照 / 导入文件（`layout/root/children` 树形 → 原生 `nodes` 平铺，`logicalStructure` 等布局名映射），云端加载即转换并回写自愈
 - 📋 **模板库**：读书笔记 / 项目计划 / 会议纪要 / 知识梳理 / 请假流程 / 白板涂鸦

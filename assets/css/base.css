@@ -170,15 +170,23 @@ input, textarea, select { font-family: inherit; }
 
 /* ---------- 弹层 ---------- */
 .modal-mask { position: fixed; inset: 0; background: rgba(16,30,54,.42); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.modal { background: #fff; border-radius: 18px; padding: 26px; width: 100%; max-width: 440px; box-shadow: var(--shadow-lg); }
+.modal { background: #fff; border-radius: 18px; padding: 26px; width: 100%; max-width: 440px; box-shadow: var(--shadow-lg); max-height: 88vh; overflow-y: auto; }
 .modal h3 { margin: 0 0 16px; font-size: 19px; }
 .modal .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
 .modal .type-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
 .modal .type-grid .opt { border: 1px solid var(--line); border-radius: 12px; padding: 16px 10px; text-align: center; cursor: pointer; transition: all .15s; }
 .modal .type-grid .opt:hover { border-color: var(--brand); background: var(--brand-soft); }
 .modal .type-grid .opt.sel { border-color: var(--brand); background: var(--brand-soft); box-shadow: 0 0 0 3px rgba(17,181,164,.18); }
-.modal .type-grid .opt .ic { color: var(--brand-700); margin-bottom: 6px; }
+.modal .type-grid .opt .ic { color: var(--brand-700); margin-bottom: 6px; display: flex; justify-content: center; }
+.modal .type-grid .opt .ic svg { width: 28px; height: 28px; }
 .modal .type-grid .opt span { font-size: 13px; font-weight: 600; }
+
+/* 模板快捷入口（新建弹框内） */
+.tpl-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+@media (max-width: 560px) {
+  .tpl-chips { display: grid; grid-template-columns: repeat(2, 1fr); }
+  .tpl-chips .btn { width: 100%; padding: 11px 8px; }
+}
 
 footer.site { border-top: 1px solid var(--line); padding: 28px 0; color: var(--ink-3); font-size: 13px; text-align: center; margin-top: 40px; }
 

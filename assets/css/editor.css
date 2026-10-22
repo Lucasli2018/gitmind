@@ -135,14 +135,16 @@ body.gm-wb-mode #outlineBtn { display: none; }
 
 /* 白板图形属性面板（左侧浮动，类 Excalidraw） */
 .gm-wb-style {
-  position: absolute; top: 68px; left: 14px; width: 190px; max-height: calc(100% - 90px);
+  position: absolute; top: 68px; left: 14px; width: 190px;
+  /* 底部预留左下控制条（缩放/撤销）的高度，避免遮挡 */
+  max-height: calc(100% - 150px);
   overflow-y: auto; overflow-x: hidden; scrollbar-width: thin;
   background: #fff; border: 1px solid #e8ecf1; border-radius: 14px;
-  box-shadow: 0 8px 24px rgba(16,30,54,.12); z-index: 14; padding: 12px 12px 14px;
+  box-shadow: 0 8px 24px rgba(16,30,54,.12); z-index: 14; padding: 10px 12px 12px;
 }
 .gm-wb-style[hidden] { display: none; }
 .gm-ws-t {
-  font-size: 12px; font-weight: 700; color: #6b7686; margin: 10px 0 6px;
+  font-size: 12px; font-weight: 700; color: #6b7686; margin: 8px 0 5px;
   display: flex; align-items: center; justify-content: space-between;
 }
 .gm-ws-t:first-child { margin-top: 0; }
@@ -163,7 +165,7 @@ body.gm-wb-mode #outlineBtn { display: none; }
 }
 .gm-ws-row.seg { gap: 4px; flex-wrap: nowrap; }
 .gm-ws-seg {
-  flex: 1 1 0; height: 30px; border: none; background: #f2f5f8; border-radius: 9px;
+  flex: 1 1 0; height: 27px; border: none; background: #f2f5f8; border-radius: 8px;
   display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
   transition: background .12s;
 }

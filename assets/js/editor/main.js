@@ -20,6 +20,9 @@ document.getElementById("iJson").innerHTML = ICONS.folder;
 document.getElementById("iImport").innerHTML = ICONS.upload;
 document.getElementById("undoBtn").innerHTML = `${ICONS.undo}<span>撤销</span>`;
 document.getElementById("redoBtn").innerHTML = `${ICONS.redo}<span>重做</span>`;
+// 左下控制条的撤销/重做按钮只显示图标（editor.html 中为空按钮，需在此填充）
+document.getElementById("undoBtn2").innerHTML = ICONS.undo;
+document.getElementById("redoBtn2").innerHTML = ICONS.redo;
 
 // 同步顶栏与左下控制条 undo/redo 按钮的可用态
 function updateUndoRedoButtons(canUndo, canRedo) {
@@ -249,26 +252,7 @@ function buildWbBar(bar) {
     bar.appendChild(b);
   }
   bar.appendChild(wbSep());
-  // 画笔 / 图形颜色
-  const colors = document.createElement("div");
-  colors.className = "gm-wb-colors";
-  for (const c of WB_COLORS) {
-    const s = document.createElement("button");
-    s.className = "gm-wb-color" + (c === editor.toolColor ? " active" : "");
-    s.style.background = c;
-    s.title = c;
-    s.addEventListener("click", () => {
-      editor.toolColor = c;
-      editor.wbProps.stroke = c; // 与属性面板保持同步
-      colors.querySelectorAll(".gm-wb-color").forEach((el) => el.classList.toggle("active", el === s));
-      if (editor.tool === "select") editor.setTool("pen"); // 选色后自动切画笔
-      refreshWbActive();
-      refreshWbStylePanel();
-    });
-    colors.appendChild(s);
-  }
-  bar.appendChild(colors);
-  // 更多菜单：嵌入网页 / 便签 / 清空白板
+  // 更多菜单：嵌入网页 / 便签 / 清空白板（颜色在左侧属性面板中选择，顶栏不再重复）
   const more = document.createElement("div");
   more.className = "gm-wb-more";
   const mb = document.createElement("button");

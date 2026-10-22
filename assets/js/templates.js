@@ -52,6 +52,14 @@ function buildWhiteboard() {
 
 export const TEMPLATES = [
   {
+    id: "brainstorm", name: "白板涂鸦", type: "whiteboard", desc: "自由头脑风暴", icon: "board",
+    build: () => buildWhiteboard(),
+  },
+  {
+    id: "leave", name: "流程图示例", type: "flowchart", desc: "请假审批流程", icon: "flow",
+    build: () => buildLeaveFlow(),
+  },
+  {
     id: "read", name: "读书笔记", type: "mindmap", desc: "拆解一本书的脉络", icon: "book",
     build: () => buildMindmap("《书名》", [
       { text: "作者与背景", children: [{ text: "作者简介" }, { text: "时代背景" }] },
@@ -141,14 +149,6 @@ export const TEMPLATES = [
       { text: "行李清单", children: [{ text: "证件" }, { text: "衣物" }] },
       { text: "注意事项" },
     ]),
-  },
-  {
-    id: "leave", name: "流程图示例", type: "flowchart", desc: "请假审批流程", icon: "flow",
-    build: () => buildLeaveFlow(),
-  },
-  {
-    id: "brainstorm", name: "白板涂鸦", type: "whiteboard", desc: "自由头脑风暴", icon: "board",
-    build: () => buildWhiteboard(),
   },
 ];
 

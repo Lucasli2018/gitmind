@@ -19,7 +19,9 @@ export async function putMapData(env, id, dataStr, userId) {
   if (env.R2) {
     try {
       r2key = userId ? R2_KEY(userId, id) : LEGACY_R2_KEY(id);
-      await env.R2.put(r2key, dataStr, { type: "application/json; charset=utf-8" });
+      // ⚠️ Workers R2 put 不支持 Blob 式的 { type } 选项（会被静默忽略导致对象无类型、被当作 text/plain），
+      // 必须用 httpMetadata.contentType 才能真正写入 application/json; charset=utf-8
+      await env.R2.put(r2key, dataStr, { httpMetadata: { contentType: "application/json; charset=utf-8" } });
       r2ok = true;
     } catch (e) {
       console.error("[store] R2 写入失败，已回退 D1 兜底:", e?.message || e);
