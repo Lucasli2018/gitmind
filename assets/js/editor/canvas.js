@@ -227,15 +227,15 @@ export class Editor {
       if (hidden.has(e.from) || hidden.has(e.to)) continue;
       html += this.edgeHTML(e);
     }
-    // 自由画笔
+    // 节点
+    for (const n of this.doc.nodes) { if (!hidden.has(n.id)) html += this.nodeHTML(n, this.selection.has(n.id)); }
+    // 自由画笔（画在节点之上：压着图形标注也不会被遮挡）
     for (const s of this.doc.strokes) html += this.strokeHTML(s);
     if (this._stroke) html += this.strokeHTML(this._stroke);
     // 白板：拖拽创建中的临时图形
     if (this._newShape) html += this.tempShapeHTML();
     // 白板：框选矩形
     if (this._marquee) html += this.marqueeHTML();
-    // 节点
-    for (const n of this.doc.nodes) { if (!hidden.has(n.id)) html += this.nodeHTML(n, this.selection.has(n.id)); }
     // 临时连线
     if (this._connect) html += this.tempConnectHTML();
     // 选中连线的中点手柄（拖动调节弯曲）
@@ -483,7 +483,27 @@ export class Editor {
     return `<g class="gm-node${selected ? " sel" : ""}" data-id="${n.id}" transform="translate(${n.x},${n.y})"${op}>${inner}</g>`;
   }
 
-  // 连线端点（世界坐标）：assoc 关联线吸附到两侧节点边框；脑图父子连线按 side 接出；流程图连线走上下端口
+  // 流程图端口坐标（世界坐标）：p ∈ top / bottom / left / right
+  _portPoint(n, s, p) {
+    if (p === "top") return { x: n.x + s.w / 2, y: n.y };
+    if (p === "left") return { x: n.x, y: n.y + s.h / 2 };
+    if (p === "right") return { x: n.x + s.w, y: n.y + s.h / 2 };
+    return { x: n.x + s.w / 2, y: n.y + s.h };
+  }
+  // 离参考点最近的端口名（自动选向用）
+  _nearestPort(n, s, rx, ry) {
+    const cands = ["top", "bottom", "left", "right"];
+    let best = "top", bestD = Infinity;
+    for (const p of cands) {
+      const pt = this._portPoint(n, s, p);
+      const d = Math.hypot(pt.x - rx, pt.y - ry);
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    return best;
+  }
+
+  // 连线端点（世界坐标）：assoc 关联线吸附到两侧节点边框；脑图父子连线按 side 接出；
+  // 流程图四向端口——优先用连线记录的 fromPort/toPort，否则按两节点相对位置自动选向
   _edgeEnds(e) {
     const a = this.nodeById(e.from), b = this.nodeById(e.to);
     const sa = this.sizes.get(a.id), sb = this.sizes.get(b.id);
@@ -499,9 +519,26 @@ export class Editor {
       if (side === "down") return { ax: a.x + sa.w / 2, ay: a.y + sa.h, bx: b.x + sb.w / 2, by: b.y };
       return { ax: a.x + sa.w, ay: a.y + sa.h / 2, bx: b.x, by: b.y + sb.h / 2 };
     }
-    const ax = a.x + sa.w / 2, ay = a.y + sa.h / 2, bx = b.x + sb.w / 2, by = b.y + sb.h / 2;
-    const sBottom = ay < by;
-    return { ax, ay: sBottom ? a.y + sa.h : a.y, bx, by: sBottom ? b.y : b.y + sb.h };
+    // 流程图：四向端口
+    const acx = a.x + sa.w / 2, acy = a.y + sa.h / 2, bcx = b.x + sb.w / 2, bcy = b.y + sb.h / 2;
+    let pa = e.fromPort ? this._portPoint(a, sa, e.fromPort) : null;
+    let pb = e.toPort ? this._portPoint(b, sb, e.toPort) : null;
+    if (!pa && !pb) {
+      // 自动选向：左右差大走横向端口，上下差大走纵向端口
+      const dx = bcx - acx, dy = bcy - acy;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        pa = this._portPoint(a, sa, dx > 0 ? "right" : "left");
+        pb = this._portPoint(b, sb, dx > 0 ? "left" : "right");
+      } else {
+        pa = this._portPoint(a, sa, dy > 0 ? "bottom" : "top");
+        pb = this._portPoint(b, sb, dy > 0 ? "top" : "bottom");
+      }
+    } else if (!pb) {
+      pb = this._portPoint(b, sb, this._nearestPort(b, sb, pa.x, pa.y));
+    } else if (!pa) {
+      pa = this._portPoint(a, sa, this._nearestPort(a, sa, pb.x, pb.y));
+    }
+    return { ax: pa.x, ay: pa.y, bx: pb.x, by: pb.y };
   }
 
   // 二次贝塞尔中点 B(0.5) = 0.25·P0 + 0.5·C + 0.25·P1
@@ -568,8 +605,14 @@ export class Editor {
         d = `M ${ax},${ay} C ${ax + dx * 0.5},${ay} ${bx - dx * 0.5},${by} ${bx},${by}`;
       }
     } else {
-      const my = (ay + by) / 2;
-      d = `M ${ax},${ay} C ${ax},${my} ${bx},${my} ${bx},${by}`;
+      // 流程图连线：端点主导方向决定 S 曲线朝向（左右端口横向弯，上下端口纵向弯）
+      if (Math.abs(bx - ax) >= Math.abs(by - ay)) {
+        const mx = (ax + bx) / 2;
+        d = `M ${ax},${ay} C ${mx},${ay} ${mx},${by} ${bx},${by}`;
+      } else {
+        const my = (ay + by) / 2;
+        d = `M ${ax},${ay} C ${ax},${my} ${bx},${my} ${bx},${by}`;
+      }
     }
     const marker = this.doc.type === "mindmap" ? "" : ` marker-end="url(#gm-arrow)"`;
     let label = "";
@@ -834,8 +877,9 @@ export class Editor {
     }
 
     // ---------- 白板：自由变换手柄（直线/箭头端点与弯曲、通用四角/四边缩放）----------
+    // 仅选择工具下响应：图形/画笔等创建工具按下时不受手柄拦截，保证「任意位置都能画」
     const handleEl = target.closest && target.closest(".gm-handle");
-    if (handleEl && this.mode === "whiteboard") {
+    if (handleEl && this.mode === "whiteboard" && this.tool === "select") {
       const hid = handleEl.getAttribute("data-id");
       const hn = this.nodeById(hid);
       if (hn) {
@@ -939,7 +983,14 @@ export class Editor {
       return;
     }
 
-    if (portEl && id && !(this.nodeById(id) && this.nodeById(id).locked)) { this._connect = { from: id, cx: e.clientX, cy: e.clientY }; return; }
+    if (portEl && id && !(this.nodeById(id) && this.nodeById(id).locked)) {
+      // 从端口按下：起点固定在该端口上（top/bottom/left/right 四向吸附）
+      const n0 = this.nodeById(id), s0 = this.sizes.get(id);
+      const p0 = portEl.getAttribute("data-port");
+      const pt = n0 && s0 ? this._portPoint(n0, s0, p0) : null;
+      this._connect = { from: id, fromPort: p0, ax: pt ? pt.x : undefined, ay: pt ? pt.y : undefined, cx: e.clientX, cy: e.clientY };
+      return;
+    }
 
     // 锁定的节点：不可选中 / 拖动（视为空白，走框选或平移）
     if (id && this.nodeById(id) && this.nodeById(id).locked) id = null;
@@ -1036,6 +1087,8 @@ export class Editor {
           if (w2 < minW) { if (k.includes("w")) x = o.x + o.w - minW; w2 = minW; }
           if (h2 < minH) { if (k.includes("n")) y = o.y + o.h - minH; h2 = minH; }
           n.x = x; n.y = y; n.w = w2; n.h = h2;
+          // 流程图节点手动调过尺寸后不再自动适配（文本仍按 20 字截断显示）
+          if (this.doc.type === "flowchart" && n.shape !== "text") n.manualSize = true;
         }
         this.render();
       }
@@ -1133,8 +1186,11 @@ export class Editor {
       let to = hitEl ? hitEl.getAttribute("data-id") : null;
       if (!to || to === this._connect.from) to = this.snapNodeAt(e.clientX, e.clientY); // 松开时自动吸附附近节点
       if (to && to !== this._connect.from) {
+        // 落点若正好在目标节点的端口上，连线固定接该端口（四向吸附）
+        const toPortEl = e.target.closest && e.target.closest(".gm-port");
+        const toPort = toPortEl ? toPortEl.getAttribute("data-port") : null;
         if (this._connect.assoc) this.addAssocEdge(this._connect.from, to);
-        else this.addEdge(this._connect.from, to);
+        else this.addEdge(this._connect.from, to, null, this._connect.fromPort || null, toPort);
         this.onChange();
         this.pushHistory();
         this.setTool("select"); // 关联完成自动切回默认选择工具
@@ -1305,10 +1361,14 @@ export class Editor {
   }
 
   // ---------- 增删 ----------
-  addEdge(from, to, label) {
+  addEdge(from, to, label, fromPort, toPort) {
     if (from === to) return;
     if (this.doc.edges.some((e) => e.from === from && e.to === to)) return;
-    this.doc.edges.push({ id: newId(), from, to, label: label || "", arrow: true });
+    const e = { id: newId(), from, to, label: label || "", arrow: true };
+    // 从端口拖出的连线固定接在该端口上（四向吸附）
+    if (fromPort) e.fromPort = fromPort;
+    if (toPort) e.toPort = toPort;
+    this.doc.edges.push(e);
   }
 
   // 脑图关联线：任意两节点之间的自由连线（虚线曲线，随节点删除自动清理）

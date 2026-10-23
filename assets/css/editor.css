@@ -174,6 +174,8 @@ body.gm-wb-mode .gm-side-rail { display: none; }              /* 右侧图标工
 }
 .gm-ws-seg:hover { background: #e8edf3; }
 .gm-ws-seg.active { background: #e3ecfd; box-shadow: inset 0 0 0 1.5px #2f80ed; color: #1f2a37; }
+/* 分段按钮内的图标不允许被 flex 压缩（否则 16x16 图标会变成细竖条） */
+.gm-ws-seg svg { flex: 0 0 auto; }
 .gm-ws-range { width: 100%; accent-color: #2f80ed; height: 22px; margin: 0; cursor: pointer; }
 /* 白板直线/箭头自由变换手柄（端点/中点） */
 .gm-handle { cursor: move; }

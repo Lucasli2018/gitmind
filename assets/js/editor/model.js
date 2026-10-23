@@ -62,5 +62,32 @@ export function sizeOf(n, type) {
   if (n.shape === "arrow" || n.shape === "line") {
     return { w: Math.max(2, Math.abs(n.w ?? 160)), h: Math.max(2, Math.abs(n.h ?? 0)), lines };
   }
+  // 流程图：文本 ≤20 字自适应宽高；>20 字只显示前 20 字 + 「……」
+  // （文本框 shape:"text" 已有自适应逻辑；手动调过尺寸的节点保持用户尺寸，仅做截断显示）
+  if (type === "flowchart" && n.shape !== "text") {
+    const MAXC = 20;
+    const raw = String(n.text || "");
+    const visible = [...raw].filter((c) => c !== "\n").length;
+    let display = raw;
+    if (visible > MAXC) {
+      let count = 0, out = "";
+      for (const ch of raw) {
+        if (ch === "\n") { out += ch; continue; }
+        if (count >= MAXC) break;
+        out += ch; count++;
+      }
+      display = out + "……";
+    }
+    const WRAPW = n.shape === "diamond" ? 130 : n.shape === "ellipse" ? 150 : 200;
+    const dLines = wrapText(display, WRAPW, fs);
+    if (n.manualSize) return { w, h, lines: dLines };
+    const textW = dLines.length ? Math.max(...dLines.map((l) => measureText(l, fs))) : 0;
+    const textH = dLines.length * (fs + 7);
+    let fw, fh;
+    if (n.shape === "diamond") { fw = Math.max(150, textW * 2 + 70); fh = Math.max(92, textH * 2 + 46); }
+    else if (n.shape === "ellipse") { fw = Math.max(130, textW * 1.45 + 30); fh = Math.max(64, textH * 1.45 + 26); }
+    else { fw = Math.max(140, textW + 36); fh = Math.max(50, textH + 20); }
+    return { w: Math.round(fw), h: Math.round(fh), lines: dLines };
+  }
   return { w, h, lines };
 }
