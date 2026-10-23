@@ -219,7 +219,8 @@ export class Editor {
         const members = g.ids.map((id) => this.nodeById(id)).filter(Boolean);
         if (!members.length) continue;
         if (members.every((n) => hidden.has(n.id))) continue; // 收起时不展示
-        html += g.kind === "frame" ? this.frameHTML(members, g) : this.summaryHTML(members, g);
+        const gsel = this.selection.has("g:" + g.id);
+        html += g.kind === "frame" ? this.frameHTML(members, g, gsel) : this.summaryHTML(members, g, gsel);
       }
     }
     // 边（脑图模式按 parentId 派生连线，保证父子之间始终有线）
@@ -523,8 +524,9 @@ export class Editor {
     const sa = this.sizes.get(a.id), sb = this.sizes.get(b.id);
     if (e.assoc) {
       const acx = a.x + sa.w / 2, acy = a.y + sa.h / 2, bcx = b.x + sb.w / 2, bcy = b.y + sb.h / 2;
-      const pa = this._rectEdgePoint(sa.w, sa.h, acx, acy, bcx, bcy);
-      const pb = this._rectEdgePoint(sb.w, sb.h, bcx, bcy, acx, acy);
+      // 头/尾调节点拖拽后的固定端点（世界坐标）优先；未调节过则吸附到节点边框
+      const pa = e.aPt || this._rectEdgePoint(sa.w, sa.h, acx, acy, bcx, bcy);
+      const pb = e.bPt || this._rectEdgePoint(sb.w, sb.h, bcx, bcy, acx, acy);
       return { ax: pa.x, ay: pa.y, bx: pb.x, by: pb.y };
     }
     if (this.doc.type === "mindmap") {
@@ -637,7 +639,7 @@ export class Editor {
     return hitPath(d) + `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${sw}"${dash}${marker}/>${label}`;
   }
 
-  // 选中连线的中点手柄：拖动调节弯曲
+  // 选中连线的调节点：关联线 = 头/中/尾 3 个（头尾可拖拽改端点），其余连线只有中点（拖动调节弯曲）
   edgeHandleHTML() {
     const eid = this._selEdgeId();
     if (!eid) return "";
@@ -647,7 +649,9 @@ export class Editor {
     if (!a || !b) return "";
     const { ax, ay, bx, by } = this._edgeEnds(e);
     const mid = this._quadMid(ax, ay, bx, by, e.bend);
-    return `<circle class="gm-edge-handle" data-edge="${eid}" cx="${mid.x.toFixed(1)}" cy="${mid.y.toFixed(1)}" r="6" fill="#fff" stroke="#11b5a4" stroke-width="2"/>`;
+    const H = (hx, hy, kind, title) => `<circle class="gm-edge-handle" data-edge="${eid}" data-h="${kind}" title="${title}" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="6" fill="#fff" stroke="#11b5a4" stroke-width="2"/>`;
+    if (e.assoc) return H(ax, ay, "p0", "起点：拖到其他节点重新吸附，或拖到空白处固定") + H(mid.x, mid.y, "mid", "中点：调节弯曲") + H(bx, by, "p1", "终点：拖到其他节点重新吸附，或拖到空白处固定");
+    return H(mid.x, mid.y, "mid", "中点：调节弯曲");
   }
 
   // 连线样式：批量应用到选中的连线（stroke/strokeWidth/strokeStyle）；bend: null 移除 / "straight" 拉直
@@ -725,8 +729,8 @@ export class Editor {
     if (minX === Infinity) return null;
     return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
   }
-  // 外框：虚线圆角矩形圈住一组成员节点（世界坐标）；g.text 为可选标题
-  frameHTML(members, g) {
+  // 外框：虚线圆角矩形圈住一组成员节点（世界坐标）；g.text 为可选标题；sel 选中高亮
+  frameHTML(members, g, sel) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const n of members) {
       const b = this.nodeBBox(n);
@@ -735,14 +739,14 @@ export class Editor {
     }
     if (minX === Infinity) return "";
     const pad = 14;
-    const col = g.stroke || "#aab3bf";
+    const col = sel ? "#11b5a4" : (g.stroke || "#aab3bf");
     const x = minX - pad, y = minY - pad, w = maxX - minX + pad * 2, h = maxY - minY + pad * 2;
     const title = g.text ? `<text x="${x.toFixed(1)}" y="${(y - 8).toFixed(1)}" font-size="14" font-weight="600" fill="${col}" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(g.text)}</text>` : "";
     return `<g class="gm-group gm-frame" data-g="${g.id}">` +
-      `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="12" fill="${col}14" stroke="${col}" stroke-width="1.8" stroke-dasharray="7 5"/>` + title + `</g>`;
+      `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="12" fill="${col}14" stroke="${col}" stroke-width="${sel ? 2.5 : 1.8}" stroke-dasharray="7 5"/>` + title + `</g>`;
   }
-  // 概括：一组成员右侧的大括号 + 标签（g.text，默认「概要」）
-  summaryHTML(members, g) {
+  // 概括：一组成员右侧的大括号 + 标签（g.text，默认「概要」）；sel 选中高亮
+  summaryHTML(members, g, sel) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const n of members) {
       const b = this.nodeBBox(n);
@@ -750,7 +754,7 @@ export class Editor {
       maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
     }
     if (minX === Infinity) return "";
-    const col = g.stroke || "#f5a623";
+    const col = sel ? "#11b5a4" : (g.stroke || "#f5a623");
     const x = maxX + 10, y0 = minY, y1 = maxY, ym = (y0 + y1) / 2;
     const k = Math.min(9, Math.max(5, (y1 - y0) * 0.25));
     const d = `M ${x.toFixed(1)},${y0.toFixed(1)} Q ${(x + 9).toFixed(1)},${y0.toFixed(1)} ${(x + 9).toFixed(1)},${(y0 + k).toFixed(1)} L ${(x + 9).toFixed(1)},${(ym - k).toFixed(1)} Q ${(x + 9).toFixed(1)},${ym.toFixed(1)} ${(x + 16).toFixed(1)},${ym.toFixed(1)} Q ${(x + 9).toFixed(1)},${ym.toFixed(1)} ${(x + 9).toFixed(1)},${(ym + k).toFixed(1)} L ${(x + 9).toFixed(1)},${(y1 - k).toFixed(1)} Q ${(x + 9).toFixed(1)},${y1.toFixed(1)} ${x.toFixed(1)},${y1.toFixed(1)}`;
@@ -905,10 +909,10 @@ export class Editor {
       return;
     }
 
-    // 选中连线的中点手柄：按下开始拖拽调节弯曲
+    // 选中连线的调节点：按下开始拖拽（mid 调弯曲 / p0、p1 调端点）
     const edgeHandleEl = target.closest && target.closest(".gm-edge-handle");
     if (edgeHandleEl) {
-      this._edgeDrag = { id: edgeHandleEl.getAttribute("data-edge"), moved: false };
+      this._edgeDrag = { id: edgeHandleEl.getAttribute("data-edge"), kind: edgeHandleEl.getAttribute("data-h") || "mid", moved: false, snapTo: null };
       return;
     }
 
@@ -1020,6 +1024,25 @@ export class Editor {
       return;
     }
 
+    // 分组（外框 / 概括）：单击选中，450ms 内再次点击 = 双击打开编辑弹框
+    // （不能用原生 dblclick：首次点击会重渲染替换 DOM，dblclick 事件丢失）
+    const groupEl = target.closest && target.closest(".gm-group");
+    if (groupEl && this.doc.type === "mindmap" && this.tool === "select") {
+      const gid = groupEl.getAttribute("data-g");
+      if (gid) {
+        const now = performance.now();
+        if (this._lastGroupClick && this._lastGroupClick.gid === gid && now - this._lastGroupClick.t < 450) {
+          this._lastGroupClick = null;
+          if (this._onGroupEdit) this._onGroupEdit(gid);
+        } else {
+          this._lastGroupClick = { gid, t: now };
+          this.selection = new Set(["g:" + gid]);
+          this.render();
+        }
+        return;
+      }
+    }
+
     if (portEl && id && !(this.nodeById(id) && this.nodeById(id).locked)) {
       // 从端口按下：起点固定在该端口上（top/bottom/left/right 四向吸附）
       const n0 = this.nodeById(id), s0 = this.sizes.get(id);
@@ -1070,14 +1093,31 @@ export class Editor {
       if (hid !== this._linkHover) { this._linkHover = hid; this.render(); }
       return;
     }
-    // 连线中点手柄拖拽：调节弯曲（反解二次贝塞尔控制点 C = 2M - (P0+P1)/2）
+    // 连线调节点拖拽：mid 调弯曲（反解二次贝塞尔控制点 C = 2M - (P0+P1)/2）；
+    // p0 / p1 拖头尾端点——吸附到附近节点边框，或落到空白处固定
     if (this._edgeDrag) {
       const ed = this.edgeById(this._edgeDrag.id);
-      if (ed) {
+      if (ed && this._edgeDrag.kind === "mid") {
         const ends = this._edgeEnds(ed);
         const w = this.toWorld(e.clientX, e.clientY);
         ed.bend = { x: 2 * w.x - (ends.ax + ends.bx) / 2, y: 2 * w.y - (ends.ay + ends.by) / 2 };
         this._edgeDrag.moved = true;
+        this.render();
+      } else if (ed) {
+        const w = this.toWorld(e.clientX, e.clientY);
+        const other = this._edgeDrag.kind === "p0" ? ed.to : ed.from;
+        const snapId = this.snapNodeAt(e.clientX, e.clientY);
+        let pt = { x: w.x, y: w.y };
+        if (snapId && snapId !== other) {
+          const sn = this.nodeById(snapId), ss = this.sizes.get(snapId);
+          if (sn && ss) {
+            const scx = sn.x + ss.w / 2, scy = sn.y + ss.h / 2;
+            pt = this._rectEdgePoint(ss.w, ss.h, scx, scy, w.x, w.y); // 吸附到目标节点边框
+          }
+        }
+        if (this._edgeDrag.kind === "p0") ed.aPt = pt; else ed.bPt = pt;
+        this._edgeDrag.moved = true;
+        this._edgeDrag.snapTo = snapId && snapId !== other ? snapId : null;
         this.render();
       }
       return;
@@ -1209,7 +1249,32 @@ export class Editor {
       return;
     }
     if (this._marquee) { this._marquee = null; this.render(); return; } // 选择已在拖拽中实时应用
-    if (this._edgeDrag) { if (this._edgeDrag.moved) { this.onChange(); this.pushHistory(); } this._edgeDrag = null; return; }
+    if (this._edgeDrag) {
+      const d = this._edgeDrag;
+      this._edgeDrag = null;
+      if (d.moved) {
+        const ed = this.edgeById(d.id);
+        if (ed && (d.kind === "p0" || d.kind === "p1")) {
+          // 端点拖拽收尾：吸附到节点则重新绑定 from/to 并清掉固定偏移；吸附无效则保留固定端点
+          const isP0 = d.kind === "p0";
+          const otherRef = isP0 ? ed.to : ed.from;
+          if (d.snapTo && d.snapTo !== otherRef) {
+            const dup = this.doc.edges.some((x) => x !== ed && x.assoc && x.from === (isP0 ? d.snapTo : ed.from) && x.to === (isP0 ? ed.to : d.snapTo));
+            if (!dup) {
+              if (isP0) ed.from = d.snapTo; else ed.to = d.snapTo;
+              if (isP0) delete ed.aPt; else delete ed.bPt;
+            }
+          } else if (!d.snapTo) {
+            // 落在空白处：保留拖拽中写入的 aPt / bPt 固定端点
+          } else {
+            // 吸附到了对端节点（无效）：回退为自动吸附
+            if (isP0) delete ed.aPt; else delete ed.bPt;
+          }
+        }
+        this.render(); this.onChange(); this.pushHistory();
+      }
+      return;
+    }
     if (this._handle) { if (this._handle.moved) { this.onChange(); this.pushHistory(); } this._handle = null; return; }
     if (this._newShape) { this.finishNewShape(); return; }
     if (this._erasing) { this._erasing = false; if (this._erased) { this.onChange(); this.pushHistory(); } this._erased = false; return; }
@@ -1258,7 +1323,8 @@ export class Editor {
     const stack = this.doc.nodes.filter((n) => n.collapsed && (cm.get(n.id) || []).length).map((n) => n.id);
     while (stack.length) {
       const id = stack.pop();
-      for (const c of cm.get(id) || []) if (!out.has(c.id)) { out.add(c.id); stack.push(c.id); }
+      // cm 的值是 id 字符串数组（非节点对象），直接收集 id
+      for (const c of cm.get(id) || []) if (!out.has(c)) { out.add(c); stack.push(c); }
     }
     return out;
   }
@@ -1277,13 +1343,7 @@ export class Editor {
       }
       return;
     }
-    // 双击分组（外框 / 概括）：弹出编辑弹框
-    const groupEl = e.target.closest && e.target.closest(".gm-group");
-    if (groupEl) {
-      const gid = groupEl.getAttribute("data-g");
-      if (gid && this._onGroupEdit) this._onGroupEdit(gid);
-      return;
-    }
+    // 分组（外框 / 概括）编辑由 onDown 的手动双击检测处理（原生 dblclick 会因重渲染丢事件）
     const hitEl = e.target.closest && e.target.closest("[data-id]");
     if (!hitEl) {
       // 设置：双击空白处创建子节点（脑图，挂在中心主题下）
@@ -1488,12 +1548,21 @@ export class Editor {
     return id;
   }
   deleteSelection() {
-    // 选择集里以 "e:" 前缀标识连线，其余为节点
+    // 选择集键类型："e:" 连线 / "g:" 分组（外框、概括）/ 其余为节点
     const edgeIds = [];
     const nodeIds = [];
-    for (const k of this.selection) (k.startsWith && k.startsWith("e:") ? edgeIds : nodeIds).push(k);
-    if (!edgeIds.length && !nodeIds.length) return;
+    const groupIds = [];
+    for (const k of this.selection) {
+      if (k.startsWith && k.startsWith("e:")) edgeIds.push(k.slice(2));
+      else if (k.startsWith && k.startsWith("g:")) groupIds.push(k.slice(2));
+      else nodeIds.push(k);
+    }
+    if (!edgeIds.length && !nodeIds.length && !groupIds.length) return;
     let changed = false;
+    if (groupIds.length) {
+      this.doc.groups = (this.doc.groups || []).filter((g) => !groupIds.includes(g.id));
+      changed = true;
+    }
     if (edgeIds.length) {
       const del = new Set(edgeIds);
       this.doc.edges = this.doc.edges.filter((e) => !del.has(e.id));

@@ -459,6 +459,9 @@ function renderMmNodePanel(panel) {
     `<div class="gm-ws-row seg">${shapeBtn("rounded", "圆角") + shapeBtn("rect", "矩形") + shapeBtn("underline", "下划线")}</div>` +
     (n.image
       ? `<div class="gm-ws-t">图片</div><div class="gm-ws-row seg"><button class="gm-ws-seg" data-k="image" data-v="__remove__">移除图片</button></div>`
+      : "") +
+    (n.icon
+      ? `<div class="gm-ws-t">图标</div><div class="gm-ws-row seg"><button class="gm-ws-seg" data-k="icon" data-v="__remove__" title="移除图标">${escapeModalText(n.icon)} 移除图标</button></div>`
       : "");
   panel.querySelectorAll("[data-k]").forEach((b) => {
     b.addEventListener("click", () => {
@@ -935,11 +938,16 @@ function wireContextMenus() {
   editor.container.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     if (editor.rmbJustDragged && editor.rmbJustDragged()) return; // 右键拖拽平移过画布，不弹菜单
-    // 右键命中：连线 / 节点 纳入选中，空白则清空
+    // 右键命中：连线 / 节点 / 分组(外框、概括) 纳入选中，空白则清空
     const edgeHit = e.target.closest && e.target.closest("[data-edge]");
+    const groupHit = e.target.closest && e.target.closest(".gm-group");
     const hit = e.target.closest && e.target.closest("[data-id]");
     if (edgeHit && editor.mode !== "whiteboard") {
       const key = "e:" + edgeHit.getAttribute("data-edge");
+      if (!editor.selection.has(key)) editor.selection = new Set([key]);
+      editor.render();
+    } else if (groupHit && editor.mode === "mindmap") {
+      const key = "g:" + groupHit.getAttribute("data-g");
       if (!editor.selection.has(key)) editor.selection = new Set([key]);
       editor.render();
     } else if (hit) {
@@ -1044,6 +1052,21 @@ function showFcMenu(x, y) {
 function showMmMenu(x, y) {
   showCtxMenu(x, y, () => {
     const items = [];
+    // 选中分组（外框 / 概括）时：编辑 / 删除分组
+    const gKey = [...editor.selection].find((k) => k.startsWith && k.startsWith("g:"));
+    const g = gKey ? editor.groupById(gKey.slice(2)) : null;
+    if (g) {
+      const kindName = g.kind === "frame" ? "外框" : "概括";
+      items.push({ label: "编辑" + kindName, act: () => openGroupModal(g.id) });
+      items.push({ label: "删除" + kindName, danger: true, act: () => editor.removeGroup(g.id) });
+      items.push({ sep: true });
+    }
+    // 选中单个节点且有图片 / 图标时：快捷移除入口
+    const selIds = [...editor.selection].filter((k) => !(k.startsWith && (k.startsWith("e:") || k.startsWith("g:"))));
+    const singleNode = selIds.length === 1 ? editor.nodeById(selIds[0]) : null;
+    if (singleNode && singleNode.image) items.push({ label: "移除图片", act: () => editor.setNodeStyle({ image: null }) });
+    if (singleNode && singleNode.icon) items.push({ label: "移除图标", act: () => editor.setNodeStyle({ icon: null }) });
+    if (g || (singleNode && (singleNode.image || singleNode.icon))) items.push({ sep: true });
     items.push({ label: "回到根节点", kbd: "Ctrl+Enter", act: mmFocusRoot });
     items.push({ sep: true });
     items.push({ label: "展开所有", act: () => mmSetAllCollapsed(false) });
