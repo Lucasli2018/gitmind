@@ -1,5 +1,5 @@
 // 编辑器内核：SVG 画布、视图变换、选择/拖拽、连线、文本编辑、渲染
-import { newId, sizeOf } from "./model.js";
+import { newId, sizeOf, normalizeDoc } from "./model.js";
 import { layoutMindmap } from "./mindmap.js";
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -39,6 +39,8 @@ export class Editor {
     this.dblClickCreate = false;  // 双击空白处创建子节点（脑图）
     this.wheelPan = false;        // 滚轮上下平移视图（false = 缩放）
     this._onNoteBadge = opts.onNoteBadge || null; // 点击节点备注徽标 -> 弹框查看/编辑
+    this._onEdgeEdit = opts.onEdgeEdit || null;   // 双击连线 -> 弹出连线编辑弹框
+    this._onGroupEdit = opts.onGroupEdit || null; // 双击外框/概括 -> 弹出分组编辑弹框
     // 撤销/重做历史栈（快照式，仅存数据不含视图）
     this._history = []; this._hidx = -1; this._restoring = false;
     this._updateUndoRedoButtons = opts.onUndoRedoState || null;
@@ -111,7 +113,9 @@ export class Editor {
     this.doc.nodes = this.doc.nodes || [];
     this.doc.edges = this.doc.edges || [];
     this.doc.strokes = this.doc.strokes || [];
+    this.doc.groups = this.doc.groups || [];
     this.doc.view = this.doc.view || { x: 0, y: 0, scale: 1 };
+    normalizeDoc(this.doc); // 迁移旧版 framed/summary 布尔字段为分组
     this.view = this.doc.view;
     this.mode = this.doc.type || "mindmap";
     this.selection.clear();
@@ -139,6 +143,7 @@ export class Editor {
       nodes: this.doc.nodes,
       edges: this.doc.edges,
       strokes: this.doc.strokes,
+      groups: this.doc.groups || [],
     });
   }
   _initHistory() {
@@ -174,6 +179,7 @@ export class Editor {
     this.doc.nodes = s.nodes || [];
     this.doc.edges = s.edges || [];
     this.doc.strokes = s.strokes || [];
+    this.doc.groups = s.groups || [];
     this.mode = this.doc.type;
     this.selection.clear();
     if (this.doc.type === "mindmap") layoutMindmap(this.doc);
@@ -205,20 +211,23 @@ export class Editor {
     let html = "";
     // 白板网格（不进导出）
     if (this.showGrid && !this._forExport) html += this.gridHTML();
-    // 脑图：外框（虚线圈住节点子树）/ 概括（大括号 + 标签），垫在连线之下
-    if (this.doc.type === "mindmap") {
-      for (const n of this.doc.nodes) {
-        if (n.framed) html += this.frameHTML(n);
-        if (n.summary) html += this.summaryHTML(n);
+    // 折叠隐藏的节点集合（脑图）：用于跳过隐藏节点及其连线 / 外框 / 概括
+    const hidden = this.hiddenNodes();
+    // 脑图：外框 / 概括（分组框选多个子节点），垫在连线之下；成员全部隐藏（收起）时不展示
+    if (this.doc.type === "mindmap" && this.doc.groups && this.doc.groups.length) {
+      for (const g of this.doc.groups) {
+        const members = g.ids.map((id) => this.nodeById(id)).filter(Boolean);
+        if (!members.length) continue;
+        if (members.every((n) => hidden.has(n.id))) continue; // 收起时不展示
+        html += g.kind === "frame" ? this.frameHTML(members, g) : this.summaryHTML(members, g);
       }
     }
     // 边（脑图模式按 parentId 派生连线，保证父子之间始终有线）
-    const hidden = this.hiddenNodes();
     let edges = this.doc.edges;
     if (this.doc.type === "mindmap") {
       edges = [];
       for (const n of this.doc.nodes) {
-        if (n.parentId && this.nodeById(n.parentId)) edges.push({ id: "p-" + n.id, from: n.parentId, to: n.id, derived: true });
+        if (n.parentId && this.nodeById(n.parentId)) edges.push({ id: "p-" + n.id, from: n.parentId, to: n.id, derived: true, label: n.edgeLabel || null });
       }
       // 关联线（工具栏创建的任意两节点连线）附加在父子连线之上
       edges = edges.concat(this.doc.edges.filter((e) => e.assoc));
@@ -415,6 +424,11 @@ export class Editor {
       if (img) inner += `<image href="${escapeXml(n.image)}" x="${((w - img.w) / 2).toFixed(1)}" y="8" width="${img.w}" height="${img.h}" preserveAspectRatio="xMidYMid meet"/>`;
       inner += `<text x="${tx}" y="${baseY}" text-anchor="${anchor}" font-size="${fs}" font-family='${fam}'${italic}${deco} fill="${tcolor}" font-weight="${weight}">${tspans}</text>`;
     }
+    // 白板：线段 / 箭头 中点文本（参考脑图连线文本，白色描边光晕保证跨线可读）
+    if ((n.shape === "arrow" || n.shape === "line") && n.text) {
+      const m = this._lineMid(n);
+      inner += `<text class="gm-line-label" x="${m.x.toFixed(1)}" y="${(m.y + 4).toFixed(1)}" text-anchor="middle" font-size="13" font-weight="600" fill="${n.textColor || "#1f2a37"}" stroke="#fff" stroke-width="3" paint-order="stroke" style="font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">${escapeXml(n.text)}</text>`;
+    }
     // 脑图节点徽标：备注（橙色，点击弹框查看/编辑）/ 超链接（蓝色，可点击打开）
     if (this.doc.type === "mindmap" && (n.note || n.href)) {
       let bx = w - 6;
@@ -584,7 +598,7 @@ export class Editor {
       const lbl = e.label
         ? `<rect x="${mid.x - 14}" y="${mid.y - 11}" width="28" height="20" rx="5" fill="#fff" stroke="${sel ? "#11b5a4" : "#ffe0c2"}"/><text x="${mid.x}" y="${mid.y + 4}" text-anchor="middle" font-size="12" fill="#d97706">${escapeXml(e.label)}</text>`
         : "";
-      return hitPath(d) + `<path d="${d}" fill="none" stroke="${stroke}" ${`stroke-width="${sw}"`}${dash} stroke-linecap="round"/>${lbl}`;
+      return hitPath(d) + `<path d="${d}" fill="none" stroke="${stroke}" ${`stroke-width="${sw}"`}${dash} stroke-linecap="round"${dataEdge}/>${lbl}`;
     }
     let d;
     const { ax, ay, bx, by } = this._edgeEnds(e);
@@ -654,6 +668,13 @@ export class Editor {
     }
     this.render(); this.onChange(); this.pushHistory();
   }
+  // 按 id 精确设置单条连线样式（双击连线弹框用，避免依赖当前选择）
+  setEdgeStyleFor(id, patch) {
+    const e = this.edgeById(id); if (!e) return;
+    for (const k of Object.keys(patch)) { if (patch[k] === null) delete e[k]; else e[k] = patch[k]; }
+    if (patch.bend === "straight") { const { ax, ay, bx, by } = this._edgeEnds(e); e.bend = { x: (ax + bx) / 2, y: (ay + by) / 2 }; }
+    this.render(); this.onChange(); this.pushHistory();
+  }
 
   strokeHTML(s) {
     if (!s.points || s.points.length < 2) return "";
@@ -704,27 +725,42 @@ export class Editor {
     if (minX === Infinity) return null;
     return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
   }
-  // 外框：虚线圆角矩形圈住子树（颜色随分支描边色）
-  frameHTML(n) {
-    const b = this.subtreeBBox(n.id);
-    if (!b) return "";
-    const col = n.stroke || "#2f80ed";
+  // 外框：虚线圆角矩形圈住一组成员节点（世界坐标）；g.text 为可选标题
+  frameHTML(members, g) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of members) {
+      const b = this.nodeBBox(n);
+      minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
+      maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
+    }
+    if (minX === Infinity) return "";
     const pad = 14;
-    return `<rect x="${(b.x - pad).toFixed(1)}" y="${(b.y - pad).toFixed(1)}" width="${(b.w + pad * 2).toFixed(1)}" height="${(b.h + pad * 2).toFixed(1)}" rx="12" fill="${col}14" stroke="${col}" stroke-width="1.8" stroke-dasharray="7 5"/>`;
+    const col = g.stroke || "#aab3bf";
+    const x = minX - pad, y = minY - pad, w = maxX - minX + pad * 2, h = maxY - minY + pad * 2;
+    const title = g.text ? `<text x="${x.toFixed(1)}" y="${(y - 8).toFixed(1)}" font-size="14" font-weight="600" fill="${col}" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(g.text)}</text>` : "";
+    return `<g class="gm-group gm-frame" data-g="${g.id}">` +
+      `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="12" fill="${col}14" stroke="${col}" stroke-width="1.8" stroke-dasharray="7 5"/>` + title + `</g>`;
   }
-  // 概括：子树右侧的大括号 + 标签（n.summaryText，默认「概要」）
-  summaryHTML(n) {
-    const b = this.subtreeBBox(n.id);
-    if (!b) return "";
-    const col = n.stroke || "#f5a623";
-    const x = b.x + b.w + 10, y0 = b.y, y1 = b.y + b.h, ym = (y0 + y1) / 2;
+  // 概括：一组成员右侧的大括号 + 标签（g.text，默认「概要」）
+  summaryHTML(members, g) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of members) {
+      const b = this.nodeBBox(n);
+      minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
+      maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
+    }
+    if (minX === Infinity) return "";
+    const col = g.stroke || "#f5a623";
+    const x = maxX + 10, y0 = minY, y1 = maxY, ym = (y0 + y1) / 2;
     const k = Math.min(9, Math.max(5, (y1 - y0) * 0.25));
     const d = `M ${x.toFixed(1)},${y0.toFixed(1)} Q ${(x + 9).toFixed(1)},${y0.toFixed(1)} ${(x + 9).toFixed(1)},${(y0 + k).toFixed(1)} L ${(x + 9).toFixed(1)},${(ym - k).toFixed(1)} Q ${(x + 9).toFixed(1)},${ym.toFixed(1)} ${(x + 16).toFixed(1)},${ym.toFixed(1)} Q ${(x + 9).toFixed(1)},${ym.toFixed(1)} ${(x + 9).toFixed(1)},${(ym + k).toFixed(1)} L ${(x + 9).toFixed(1)},${(y1 - k).toFixed(1)} Q ${(x + 9).toFixed(1)},${y1.toFixed(1)} ${x.toFixed(1)},${y1.toFixed(1)}`;
-    const label = n.summaryText || "概要";
+    const label = g.text || "概要";
     const lw = Math.max(36, label.length * 14 + 18);
-    return `<path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linecap="round"/>` +
+    return `<g class="gm-group gm-summary" data-g="${g.id}">` +
+      `<path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linecap="round"/>` +
       `<rect x="${(x + 24).toFixed(1)}" y="${(ym - 15).toFixed(1)}" width="${lw}" height="30" rx="8" fill="#fff" stroke="${col}" stroke-width="1.5"/>` +
-      `<text x="${(x + 24 + lw / 2).toFixed(1)}" y="${(ym + 5).toFixed(1)}" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2a37" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(label)}</text>`;
+      `<text x="${(x + 24 + lw / 2).toFixed(1)}" y="${(ym + 5).toFixed(1)}" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2a37" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(label)}</text>` +
+      `</g>`;
   }
 
   // 关联线自动吸附：光标所在 / 附近（26px 容差）的最近节点 id，无则 null
@@ -969,10 +1005,11 @@ export class Editor {
     const hitEl = target.closest && target.closest("[data-id]");
     let id = hitEl ? hitEl.getAttribute("data-id") : null;
 
-    // 连线：选中（Shift 叠加多选）；中点手柄已在上方处理
+    // 连线：选中（Shift 叠加多选）；中点手柄已在上方处理；派生（父子）连线不单选，避免无意义样式面板
     const edgeEl = target.closest && target.closest("[data-edge]");
-    if (edgeEl && this.tool === "select" && this.mode !== "whiteboard") {
-      const key = "e:" + edgeEl.getAttribute("data-edge");
+    const edgeIdAttr = edgeEl && edgeEl.getAttribute("data-edge");
+    if (edgeEl && edgeIdAttr && this.tool === "select" && this.mode !== "whiteboard" && !edgeIdAttr.startsWith("p-")) {
+      const key = "e:" + edgeIdAttr;
       if (e.shiftKey) {
         if (this.selection.has(key)) this.selection.delete(key); else this.selection.add(key);
         this.render();
@@ -1228,14 +1265,23 @@ export class Editor {
 
   onDblClick(e) {
     if (this.readOnly) return;
-    // 双击连线：编辑连线文字（留空清除）
+    // 双击连线：弹出连线编辑弹框（替代原生 prompt）；派生连线（脑图父子）label 存于子节点
     const edgeEl = e.target.closest && e.target.closest("[data-edge]");
     if (edgeEl) {
-      const ed = this.edgeById(edgeEl.getAttribute("data-edge"));
-      if (ed) {
-        const label = prompt("连线文字（留空清除）", ed.label || "");
-        if (label !== null) { ed.label = label.trim() || null; if (!ed.label) delete ed.label; this.render(); this.onChange(); this.pushHistory(); }
+      const eid = edgeEl.getAttribute("data-edge");
+      const ed = this.edgeById(eid);
+      if (ed) { if (this._onEdgeEdit) this._onEdgeEdit(ed.id); }
+      else {
+        const childId = eid.startsWith("p-") ? eid.slice(2) : null;
+        if (childId && this._onEdgeEdit) this._onEdgeEdit(null, childId);
       }
+      return;
+    }
+    // 双击分组（外框 / 概括）：弹出编辑弹框
+    const groupEl = e.target.closest && e.target.closest(".gm-group");
+    if (groupEl) {
+      const gid = groupEl.getAttribute("data-g");
+      if (gid && this._onGroupEdit) this._onGroupEdit(gid);
       return;
     }
     const hitEl = e.target.closest && e.target.closest("[data-id]");
@@ -1376,6 +1422,43 @@ export class Editor {
     if (from === to) return;
     if (this.doc.edges.some((e) => e.assoc && e.from === from && e.to === to)) return;
     this.doc.edges.push({ id: newId(), from, to, label: label || "", assoc: true });
+  }
+
+  // ---------- 按 id 精确更新单个节点（备注等独立属性，不受当前选择影响）----------
+  updateNodeById(id, patch) {
+    const n = this.nodeById(id);
+    if (!n) return;
+    for (const k of Object.keys(patch)) {
+      if (patch[k] === null) delete n[k];
+      else n[k] = patch[k];
+    }
+    if (this.doc.type === "mindmap") layoutMindmap(this.doc);
+    this.render(); this.onChange(); this.pushHistory();
+  }
+
+  // ---------- 分组（外框 / 概括）：框选多个子节点 ----------
+  groupById(id) { return (this.doc.groups || []).find((g) => g.id === id); }
+  addGroup(kind, ids, opts = {}) {
+    if (!this.doc.groups) this.doc.groups = [];
+    const g = {
+      id: newId(), kind,
+      ids: [...new Set(ids)],
+      text: opts.text != null ? opts.text : (kind === "summary" ? "概要" : ""),
+      stroke: opts.stroke || (kind === "summary" ? "#f5a623" : "#aab3bf"),
+    };
+    this.doc.groups.push(g);
+    this.render(); this.onChange(); this.pushHistory();
+    return g;
+  }
+  updateGroup(id, patch) {
+    const g = this.groupById(id); if (!g) return;
+    for (const k of Object.keys(patch)) { if (patch[k] === null) delete g[k]; else g[k] = patch[k]; }
+    this.render(); this.onChange(); this.pushHistory();
+  }
+  removeGroup(id) {
+    if (!this.doc.groups) return;
+    this.doc.groups = this.doc.groups.filter((g) => g.id !== id);
+    this.render(); this.onChange(); this.pushHistory();
   }
 
   addMindmapChild(parentId) {

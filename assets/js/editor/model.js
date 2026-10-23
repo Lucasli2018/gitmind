@@ -4,7 +4,37 @@ import { uid } from "../api.js";
 export function newId() { return uid(); }
 
 export function emptyDoc(type) {
-  return { type: type || "mindmap", nodes: [], edges: [], strokes: [], view: { x: 0, y: 0, scale: 1 } };
+  return { type: type || "mindmap", nodes: [], edges: [], strokes: [], groups: [], view: { x: 0, y: 0, scale: 1 } };
+}
+
+// 收集某节点的全部后代 id（含间接后代）
+export function descendantsOf(id, nodes) {
+  const cm = new Map();
+  for (const n of nodes) if (n.parentId != null) { if (!cm.has(n.parentId)) cm.set(n.parentId, []); cm.get(n.parentId).push(n); }
+  const out = [];
+  const stack = [...(cm.get(id) || [])];
+  while (stack.length) { const c = stack.pop(); out.push(c.id); for (const k of (cm.get(c.id) || [])) stack.push(k); }
+  return out;
+}
+
+// 文档归一化：把旧版「节点上的 framed / summary 布尔字段」迁移为分组（外框 / 概括），
+// 分组可框选多个子节点；幂等（已迁移的不再重复处理）
+export function normalizeDoc(doc) {
+  if (!doc) return doc;
+  doc.groups = doc.groups || [];
+  if (doc.type === "mindmap" && doc.nodes) {
+    for (const n of doc.nodes) {
+      if (n.framed) {
+        doc.groups.push({ id: newId(), kind: "frame", ids: [n.id, ...descendantsOf(n.id, doc.nodes)], srcNode: n.id, text: "", stroke: "#aab3bf" });
+        delete n.framed;
+      }
+      if (n.summary) {
+        doc.groups.push({ id: newId(), kind: "summary", ids: descendantsOf(n.id, doc.nodes), srcNode: n.id, text: n.summaryText || "概要", stroke: "#f5a623" });
+        delete n.summary; delete n.summaryText;
+      }
+    }
+  }
+  return doc;
 }
 export function cloneDoc(doc) { return JSON.parse(JSON.stringify(doc)); }
 

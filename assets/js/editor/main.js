@@ -293,16 +293,17 @@ function onMmAction(act, arg) {
     return;
   }
   if (act === "summary") {
-    if (needNode()) return;
-    if (node.summary) { editor.setNodeStyle({ summary: null, summaryText: null }); toast("已移除概括", "info"); }
-    else openSummaryModal(node);
+    const ids = selectedNodeIds();
+    if (!ids.length) { toast("请先选中要概括的节点（可框选 / 多选）", "info"); return; }
+    const g = editor.addGroup("summary", ids);
+    openGroupModal(g.id);
     return;
   }
   if (act === "frame") {
-    if (needNode()) return;
-    const on = !node.framed;
-    editor.setNodeStyle({ framed: on ? true : null });
-    toast(on ? "已为该分支添加外框" : "已移除外框", "info");
+    const ids = selectedNodeIds();
+    if (!ids.length) { toast("请先选中要框选的节点（可框选 / 多选）", "info"); return; }
+    const g = editor.addGroup("frame", ids);
+    openGroupModal(g.id);
     return;
   }
   if (act === "link") {
@@ -325,36 +326,108 @@ function openNoteModal(node) {
   const ta = document.getElementById("gmNoteTa");
   setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
   document.getElementById("gmNoteSave").addEventListener("click", () => {
-    editor.setNodeStyle({ note: ta.value.trim() || null });
+    editor.updateNodeById(node.id, { note: ta.value.trim() || null });
     toast(ta.value.trim() ? "备注已保存，点击节点右上角「注」徽标可再次查看" : "已移除备注", "success");
     close();
   });
   document.getElementById("gmNoteDel").addEventListener("click", () => {
-    editor.setNodeStyle({ note: null });
+    editor.updateNodeById(node.id, { note: null });
     toast("已移除备注", "info");
     close();
   });
 }
-function openSummaryModal(node) {
-  const close = showModal("概括",
-    `<div style="font-size:13px;color:#6b7686;margin-bottom:8px">为「${escapeModalText((node.text || "").slice(0, 20))}」分支添加概括：大括号 + 标签标注在子树右侧</div>` +
-    `<input id="gmSummaryInput" class="gm-note-ta" style="min-height:0;padding:9px 12px" maxlength="20" placeholder="概要" value="${escapeModalText(node.summaryText || "概要")}" />` +
+// 外框 / 概括 编辑弹框：标题 + 颜色 + 删除（双击分组或工具栏创建后弹出）
+function openGroupModal(gid) {
+  const g = editor.groupById(gid);
+  if (!g) return;
+  const isFrame = g.kind === "frame";
+  const swatches = ["#aab3bf", "#2f80ed", "#11b5a4", "#f5a623", "#ef4444", "#8b5cf6", "#1f2a37"];
+  const sw = (c) => `<button class="gm-ws-swatch${c === g.stroke ? " active" : ""}" data-gc="${c}" title="${c}" style="background:${c}"></button>`;
+  const close = showModal(isFrame ? "外框" : "概括",
+    `<div style="font-size:13px;color:#6b7686;margin-bottom:8px">${isFrame ? "虚线框圈住所选节点，双击可再次编辑" : "大括号 + 标签标注在所选节点右侧，双击可再次编辑"}</div>` +
+    `<div class="gm-ws-t">标题</div>` +
+    `<input id="gmGroupText" class="gm-note-ta" style="min-height:0;padding:9px 12px" maxlength="20" placeholder="${isFrame ? "可选标题" : "概要"}" value="${escapeModalText(g.text || "")}" />` +
+    `<div class="gm-ws-t">颜色</div>` +
+    `<div class="gm-ws-row">${swatches.map(sw).join("")}</div>` +
     `<div class="gm-modal-acts" style="margin-top:14px">` +
-    `<button class="btn btn-ghost btn-sm" data-close>取消</button>` +
-    `<button class="btn gm-btn-coral btn-sm" id="gmSummarySave">添加</button></div>`);
-  const inp = document.getElementById("gmSummaryInput");
-  setTimeout(() => { inp.focus(); inp.select(); }, 0);
-  document.querySelector("#gmSummarySave").addEventListener("click", () => {
-    editor.setNodeStyle({ summary: true, summaryText: inp.value.trim() || "概要" });
+    `<button class="btn btn-ghost btn-sm" id="gmGroupDel">删除${isFrame ? "外框" : "概括"}</button>` +
+    `<button class="btn gm-btn-coral btn-sm" id="gmGroupSave">完成</button></div>`);
+  const inp = document.getElementById("gmGroupText");
+  setTimeout(() => { inp.focus(); }, 0);
+  document.querySelectorAll("[data-gc]").forEach((b) => b.addEventListener("click", () => {
+    editor.updateGroup(gid, { stroke: b.dataset.gc });
+    document.querySelectorAll("[data-gc]").forEach((x) => x.classList.toggle("active", x.dataset.gc === b.dataset.gc));
+  }));
+  document.getElementById("gmGroupSave").addEventListener("click", () => {
+    editor.updateGroup(gid, { text: inp.value.trim() });
     close();
   });
-  document.querySelector("[data-close]").addEventListener("click", close);
+  document.getElementById("gmGroupDel").addEventListener("click", () => {
+    editor.removeGroup(gid);
+    toast(`已删除${isFrame ? "外框" : "概括"}`, "info");
+    close();
+  });
 }
 
 // ---------- 脑图节点样式面板（左侧浮动，选中节点时显示，参考 mind-map 节点样式） ----------
 const MM_TEXT_COLORS = ["#1f2a37", "#e03131", "#2f80ed", "#0b7d73", "#f59f00", "#7048e8"];
 const MM_BG_COLORS = ["#ffffff", "#fff3bf", "#ffe3e3", "#d3f9d8", "#d0ebff", "#e5dbff", "transparent"];
 const MM_STROKE_COLORS = ["#94a3b8", "#1f2a37", "#e03131", "#2f80ed", "#0b7d73", "#f59f00", "#7048e8"];
+// 连线编辑弹框（替代原生 prompt）：文字 / 颜色 / 线宽 / 线型 / 箭头 / 删除
+// 支持脑图派生连线（label 存于子节点 edgeLabel）
+function openEdgeModal(eid, derivedChildId) {
+  const e = eid ? editor.edgeById(eid) : null;
+  const dChild = derivedChildId ? editor.nodeById(derivedChildId) : null;
+  if (!e && !dChild) return;
+  const derived = !e && !!dChild;
+  const cur = {
+    stroke: derived ? (dChild.stroke || "#11b5a4") : (e.stroke || (e.assoc ? "#ff9f43" : (e.derived ? "#11b5a4" : "#94a3b8"))),
+    strokeWidth: derived ? 2 : (e.strokeWidth || 2),
+    strokeStyle: derived ? "solid" : (e.strokeStyle || (e.assoc ? "dashed" : "solid")),
+    label: derived ? (dChild.edgeLabel || "") : (e.label || ""),
+  };
+  const cols = ["#94a3b8", "#11b5a4", "#ff9f43", "#ef4444", "#3b82f6", "#8b5cf6", "#1f2a37"];
+  const colBtn = (c) => `<button class="gm-ws-swatch${c === cur.stroke ? " active" : ""}" data-ek="stroke" data-ev="${c}" title="${c}" style="background:${c}"></button>`;
+  const wBtn = (v) => `<button class="gm-ws-seg${cur.strokeWidth === v ? " active" : ""}" data-ek="strokeWidth" data-ev="${v}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="${v}"/></svg></button>`;
+  const sBtn = (v, dash) => `<button class="gm-ws-seg${cur.strokeStyle === v ? " active" : ""}" data-ek="strokeStyle" data-ev="${v}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="2"${dash}/></svg></button>`;
+  const arrowRow = derived || (e && e.derived) ? "" :
+    `<div class="gm-ws-t">箭头</div><div class="gm-ws-row seg"><button class="gm-ws-seg${(e.arrow || e.arrow === null ? " active" : "")}" data-ek="arrow" data-ev="1" title="带箭头">→</button><button class="gm-ws-seg${(e.arrow === false ? " active" : "")}" data-ek="arrow" data-ev="0" title="无箭头">—</button></div>`;
+  const close = showModal("连线",
+    `<div class="gm-ws-t">连线文字</div>` +
+    `<input id="gmEdgeLabel" class="gm-note-ta" style="min-height:0;padding:9px 12px" maxlength="40" placeholder="可选文字" value="${escapeModalText(cur.label)}" />` +
+    `<div class="gm-ws-t">颜色</div><div class="gm-ws-row">${cols.map(colBtn).join("")}</div>` +
+    `<div class="gm-ws-t">线宽</div><div class="gm-ws-row seg">${wBtn(2) + wBtn(4) + wBtn(6)}</div>` +
+    `<div class="gm-ws-t">线型</div><div class="gm-ws-row seg">${sBtn("solid", "") + sBtn("dashed", ' stroke-dasharray="5 3"') + sBtn("dotted", ' stroke-dasharray="0.5 3.5" stroke-linecap="round"')}</div>` +
+    arrowRow +
+    `<div class="gm-modal-acts" style="margin-top:14px">` +
+    (derived || (e && e.derived) ? "" : `<button class="btn btn-ghost btn-sm" id="gmEdgeDel">删除连线</button>`) +
+    `<button class="btn gm-btn-coral btn-sm" id="gmEdgeSave">完成</button></div>`);
+  const inp = document.getElementById("gmEdgeLabel");
+  setTimeout(() => { inp.focus(); }, 0);
+  document.querySelectorAll("[data-ek]").forEach((b) => b.addEventListener("click", () => {
+    const k = b.dataset.ek, v = b.dataset.ev;
+    if (derived) {
+      if (k === "stroke") dChild.stroke = v;
+      else if (k === "strokeWidth") dChild.strokeWidth = Number(v);
+      else if (k === "strokeStyle") dChild.strokeStyle = v;
+    } else {
+      const patch = {};
+      if (k === "strokeWidth") patch.strokeWidth = Number(v);
+      else if (k === "arrow") patch.arrow = v === "1";
+      else patch[k] = v;
+      editor.setEdgeStyleFor(eid, patch);
+    }
+    document.querySelectorAll(`[data-ek="${k}"]`).forEach((x) => x.classList.toggle("active", x.dataset.ev === v));
+  }));
+  document.getElementById("gmEdgeSave").addEventListener("click", () => {
+    const val = inp.value.trim();
+    if (derived) { if (val) dChild.edgeLabel = val; else delete dChild.edgeLabel; editor.render(); editor.onChange(); editor.pushHistory(); }
+    else editor.setEdgeStyleFor(eid, { label: val || null });
+    close();
+  });
+  const del = document.getElementById("gmEdgeDel");
+  if (del) del.addEventListener("click", () => { editor.deleteSelection(); close(); });
+}
 function renderMmNodePanel(panel) {
   const nodes = [...editor.selection].map((id) => editor.nodeById(id)).filter(Boolean);
   panel.hidden = nodes.length === 0;
@@ -662,7 +735,7 @@ function renderEdgeStylePanel(panel, eid) {
       if (k === "strokeWidth") editor.setEdgeStyle({ strokeWidth: Number(v) });
       else if (k === "bend") editor.setEdgeStyle({ bend: v === "straight" ? "straight" : null });
       else if (k === "del") { editor.deleteSelection(); return; }
-      else if (k === "label") { const t = prompt("连线文字（留空移除）", e.label || ""); editor.setEdgeStyle({ label: t && t.trim() ? t.trim() : null }); }
+      else if (k === "label") { openEdgeModal(eid); }
       else editor.setEdgeStyle({ [k]: v });
       refreshWbStylePanel();
     });
@@ -679,6 +752,7 @@ function refreshWbStylePanel() {
   if (editor.mode !== "whiteboard") { panel.hidden = true; return; }
   // 文字模式：文字工具激活，或选中了单个文字节点 -> 显示文字专属面板
   const selNodes = [...editor.selection].map((id) => editor.nodeById(id)).filter(Boolean);
+  const laNode = (selNodes.length === 1 && (selNodes[0].shape === "line" || selNodes[0].shape === "arrow")) ? selNodes[0] : null;
   const isText = editor.tool === "text" || (selNodes.length === 1 && selNodes[0].shape === "text");
   if (isText) { renderWbTextPanel(panel); return; }
   // 图形/画笔工具激活或选中了图形时显示
@@ -707,8 +781,11 @@ function refreshWbStylePanel() {
       `<button class="gm-ws-seg${p.rounded ? " active" : ""}" data-k="rounded" data-v="true" title="圆角"><svg width="18" height="14"><path d="M3,13 L3,7 Q3,3 7,3 L13,3" fill="none" stroke="#1f2a37" stroke-width="2" stroke-linecap="round"/></svg></button>` +
       `<button class="gm-ws-seg${!p.rounded ? " active" : ""}" data-k="rounded" data-v="false" title="直角"><svg width="18" height="14"><path d="M3,13 L3,3 L13,3" fill="none" stroke="#1f2a37" stroke-width="2" stroke-linecap="round"/></svg></button>` +
     `</div>` +
+    (laNode ? `<div class="gm-ws-t">文字</div><input id="wbLineText" data-id="${laNode.id}" class="gm-note-ta" style="min-height:0;padding:9px 12px" maxlength="40" placeholder="线段文字（双击也可编辑）" value="${escapeModalText(laNode.text || "")}" />` : "") +
     wbOpacityLayerHtml(p) + wbActionsHtml();
   wireWsPanelEvents(panel);
+  const lt = document.getElementById("wbLineText");
+  if (lt) lt.addEventListener("input", () => { const n = editor.nodeById(lt.dataset.id); if (n) { n.text = lt.value; editor.render(); editor.onChange(); } });
 }
 
 // 属性面板公共尾段：透明度滑杆 + 图层排序
@@ -982,6 +1059,8 @@ function mmNodeDepth(n) {
   return d;
 }
 function mmHasKids(n) { return editor.doc.nodes.some((c) => c.parentId === n.id); }
+// 当前选中中的节点 id（排除连线 "e:" 键）
+function selectedNodeIds() { return [...editor.selection].filter((id) => !String(id).startsWith("e:")); }
 function mmSetAllCollapsed(collapsed) {
   for (const n of editor.doc.nodes) if (mmHasKids(n)) n.collapsed = collapsed;
   layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); editor.pushHistory();
@@ -1558,7 +1637,7 @@ function wireKeys() {
   document.getElementById("titleInput").value = map.title || "未命名导图";
   document.getElementById("shareBtn").textContent = map.is_public ? "已分享" : "分享";
 
-  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), mode: map.type || "mindmap", onNoteBadge: (id) => { const n = editor.nodeById(id); if (n) openNoteModal(n); } });
+  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), mode: map.type || "mindmap", onNoteBadge: (id) => { const n = editor.nodeById(id); if (n) openNoteModal(n); }, onEdgeEdit: (eid, childId) => openEdgeModal(eid, childId), onGroupEdit: (gid) => openGroupModal(gid) });
   window.__gmEditor = editor; // 测试钩子：headless 验证用
   wireContextMenus();
   editor.load(map.data);
