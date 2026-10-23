@@ -9,6 +9,11 @@
   <link rel="stylesheet" href="/assets/css/editor.css" />
 </head>
 <body>
+  <!-- 首屏加载遮罩：数据/编辑器未就绪时显示，渲染完成后由 main.js 隐藏 -->
+  <div id="gmLoading" class="gm-loading">
+    <div class="gm-loading-spin"></div>
+    <div class="gm-loading-txt">正在加载…</div>
+  </div>
   <div class="gm-topbar">
     <a class="gm-back" href="/dashboard.html">← 我的导图</a>
     <input id="titleInput" class="gm-title" placeholder="未命名导图" maxlength="80" />

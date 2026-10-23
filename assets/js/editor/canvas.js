@@ -41,6 +41,8 @@ export class Editor {
     this._onNoteBadge = opts.onNoteBadge || null; // 点击节点备注徽标 -> 弹框查看/编辑
     this._onEdgeEdit = opts.onEdgeEdit || null;   // 双击连线 -> 弹出连线编辑弹框
     this._onGroupEdit = opts.onGroupEdit || null; // 双击外框/概括 -> 弹出分组编辑弹框
+    this.onImageZoom = opts.onImageZoom || null;   // 单击图片 -> 放大查看（灯箱）
+    this.onConfirmImageDelete = opts.onConfirmImageDelete || null; // 删除含图片节点 -> 二次确认
     // 撤销/重做历史栈（快照式，仅存数据不含视图）
     this._history = []; this._hidx = -1; this._restoring = false;
     this._updateUndoRedoButtons = opts.onUndoRedoState || null;
@@ -356,7 +358,11 @@ export class Editor {
         const hit = `<path d="${d}" fill="none" stroke="transparent" stroke-width="14" pointer-events="stroke"/>`;
         return hit + `<path d="${d}" fill="none" stroke="${stroke}" ${sa} stroke-linejoin="round"${arrow}/>`;
       }
-      case "image": return `<image href="${n.src || ""}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none"/>`;
+      case "image": {
+        const ph = `<g class="gm-img-ph"><rect x="0" y="0" width="${w}" height="${h}" rx="8" stroke-dasharray="6 5"/><text x="${(w / 2).toFixed(1)}" y="${(h / 2 + 4).toFixed(1)}" text-anchor="middle">图片</text></g>`;
+        const im = `<image data-img="1" href="${n.src || ""}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none"/>`;
+        return ph + im;
+      }
       case "embed": {
         // 底框始终绘制（导出 PNG/SVG 时 iframe 不可渲染，仍有边框提示）
         let out = `<rect x="0" y="0" width="${w}" height="${h}" rx="10" fill="#fff" stroke="#aab3bf" stroke-width="1.5"/>` +
@@ -422,7 +428,11 @@ export class Editor {
         tspans += `<tspan x="${tx}" y="${(startY + i * LH).toFixed(1)}">${prefix}${escapeXml(ln) || " "}</tspan>`;
       });
       const tcolor = n.textColor || "#1f2a37";
-      if (img) inner += `<image href="${escapeXml(n.image)}" x="${((w - img.w) / 2).toFixed(1)}" y="8" width="${img.w}" height="${img.h}" preserveAspectRatio="xMidYMid meet"/>`;
+      if (img) {
+        const px = ((w - img.w) / 2).toFixed(1);
+        inner += `<g class="gm-img-ph"><rect x="${px}" y="8" width="${img.w}" height="${img.h}" rx="6"/><text x="${(parseFloat(px) + img.w / 2).toFixed(1)}" y="${(8 + img.h / 2 + 4).toFixed(1)}" text-anchor="middle">图片</text></g>`;
+        inner += `<image data-img="1" href="${escapeXml(n.image)}" x="${px}" y="8" width="${img.w}" height="${img.h}" preserveAspectRatio="xMidYMid meet"/>`;
+      }
       inner += `<text x="${tx}" y="${baseY}" text-anchor="${anchor}" font-size="${fs}" font-family='${fam}'${italic}${deco} fill="${tcolor}" font-weight="${weight}">${tspans}</text>`;
     }
     // 白板：线段 / 箭头 中点文本（参考脑图连线文本，白色描边光晕保证跨线可读）
@@ -882,6 +892,10 @@ export class Editor {
     const sx = e.clientX - r.left, sy = e.clientY - r.top;
     const target = e.target;
 
+    // 图片（脑图节点图片 / 白板图片节点）：记录待放大源，单击（未拖动）时由 onUp 触发灯箱
+    const imgEl = target.closest && target.closest("[data-img]");
+    if (imgEl) this._pendingImgZoom = imgEl.getAttribute("href") || imgEl.getAttribute("xlink:href") || null;
+
     if (this.readOnly) {
       if (!e.shiftKey) this.clearSelection();
       this._pan = { sx, sy, ox: this.view.x, oy: this.view.y };
@@ -1299,7 +1313,17 @@ export class Editor {
       }
       this._connect = null; this._connectHover = null; this.render(); return;
     }
-    if (this._drag) { if (this._drag.moved) { this.onChange(); this.pushHistory(); } this._drag = null; return; }
+    if (this._drag) {
+      const moved = this._drag.moved;
+      if (moved) { this.onChange(); this.pushHistory(); }
+      this._drag = null;
+      // 单击图片（未拖动）-> 放大查看；拖动则正常移动节点
+      if (!moved && this._pendingImgZoom) {
+        const src = this._pendingImgZoom; this._pendingImgZoom = null;
+        if (this.onImageZoom) this.onImageZoom(src);
+      }
+      return;
+    }
     if (this._pan) { this._pan = null; return; }
   }
 
@@ -1547,7 +1571,7 @@ export class Editor {
     if (this.autoEditNewNode) this.beginTextEdit(id);
     return id;
   }
-  deleteSelection() {
+  async deleteSelection() {
     // 选择集键类型："e:" 连线 / "g:" 分组（外框、概括）/ 其余为节点
     const edgeIds = [];
     const nodeIds = [];
@@ -1558,6 +1582,12 @@ export class Editor {
       else nodeIds.push(k);
     }
     if (!edgeIds.length && !nodeIds.length && !groupIds.length) return;
+    // 含图片的节点：删除前二次提醒（必须在真正删除之前判定，否则节点已被移除会导致漏判）
+    const hasImage = nodeIds.some((id) => { const n = this.nodeById(id); return n && (n.image || (n.shape === "image" && n.src)); });
+    if (hasImage) {
+      const ok = this.onConfirmImageDelete ? await this.onConfirmImageDelete() : true;
+      if (!ok) return;
+    }
     let changed = false;
     if (groupIds.length) {
       this.doc.groups = (this.doc.groups || []).filter((g) => !groupIds.includes(g.id));

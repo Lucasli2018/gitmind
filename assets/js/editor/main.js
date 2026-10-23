@@ -1,11 +1,10 @@
 // 编辑器入口：加载导图、自动保存、工具栏、主题、导出、分享、快捷键
 import { Auth, getMap, saveMap, setShare, toast, fmtTime, fmtSize, byteLength } from "../api.js";
-import { showFloatPanel, showModal } from "../ui.js";
+import { showFloatPanel, showModal, confirmDialog } from "../ui.js";
 import { ICONS } from "../icons.js";
 import { Editor } from "./canvas.js";
 import { FC_TOOLS } from "./flowchart.js";
 import { WB_TOOLS, WB_MORE, WB_COLORS } from "./whiteboard.js";
-import { openOutline } from "./outline.js";
 import { exportSVG, exportPNG, exportJSON, importJSON, getExportSVG } from "./export.js";
 import { layoutMindmap } from "./mindmap.js";
 import { newId } from "./model.js";
@@ -317,6 +316,57 @@ function onMmAction(act, arg) {
 function escapeModalText(s) {
   return (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 }
+
+// ---------- 图片压缩：默认压到 maxBytes 以内（按 原大小/上限 自动算缩放与质量） ----------
+// 返回 Promise<dataURL>。noCompress=true 时原样返回（设置项“上传图片不压缩”）。
+const IMG_MAX_BYTES = 100 * 1024; // 100KB
+function _dataUrlBytes(u) {
+  const i = u.indexOf(",");
+  const b64 = i >= 0 ? u.slice(i + 1) : u;
+  return Math.floor(b64.length * 3 / 4);
+}
+function compressImageDataURL(dataURL, { maxBytes = IMG_MAX_BYTES, noCompress = false } = {}) {
+  return new Promise((resolve) => {
+    if (noCompress) { resolve(dataURL); return; }
+    const img = new Image();
+    img.onload = () => {
+      const nw = img.naturalWidth || 1000, nh = img.naturalHeight || 1000;
+      // 先按像素上限收敛（避免超大图内存/体积爆炸），再按体积迭代降质
+      const MAX_DIM = 2000;
+      let scale = nw > MAX_DIM || nh > MAX_DIM ? MAX_DIM / Math.max(nw, nh) : 1;
+      let quality = 0.9;
+      const tryRender = () => {
+        const w = Math.max(1, Math.round(nw * scale)), h = Math.max(1, Math.round(nh * scale));
+        const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+        const ctx = cv.getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h); // 白底，兼容带透明通道的图片
+        ctx.drawImage(img, 0, 0, w, h);
+        const out = cv.toDataURL("image/jpeg", quality);
+        if (_dataUrlBytes(out) <= maxBytes || (scale <= 0.2 && quality <= 0.5)) { resolve(out); return; }
+        if (quality > 0.5) quality -= 0.1;            // 先降质量
+        else { scale *= 0.82; quality = 0.85; }        // 质量到底再降尺寸
+        if (scale < 0.1) { resolve(out); return; }
+        tryRender();
+      };
+      tryRender();
+    };
+    img.onerror = () => resolve(dataURL); // 解码失败则回退原图
+    img.src = dataURL;
+  });
+}
+
+// ---------- 图片放大灯箱（点击图片查看大图，点击空白处关闭） ----------
+function openImageLightbox(src) {
+  if (!src) return;
+  const mask = document.createElement("div");
+  mask.className = "gm-lightbox";
+  mask.innerHTML = `<button class="gm-lb-x" aria-label="关闭">×</button><img src="${escapeModalText(src)}" alt="图片预览"/><div class="gm-lb-hint">点击空白处关闭</div>`;
+  const close = () => { mask.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  mask.addEventListener("click", (e) => { if (e.target === mask || e.target.classList.contains("gm-lb-x")) close(); });
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(mask);
+}
 function openNoteModal(node) {
   const close = showModal("备注",
     `<textarea id="gmNoteTa" class="gm-note-ta" placeholder="输入备注内容…（留空保存则移除备注）">${escapeModalText(node.note || "")}</textarea>` +
@@ -481,7 +531,7 @@ function renderMmNodePanel(panel) {
 // ---------- 右侧图标栏（属性 / 主题 / 结构 / 大纲 / 设置，参考 mind-map） ----------
 // 编辑器行为设置（localStorage 持久化，应用到 editor 实例）
 const GM_SETTINGS_KEY = "gm_editor_settings";
-let settings = { grid: false, autoEdit: true, dblCreate: false, wheelPan: false };
+let settings = { grid: false, autoEdit: true, dblCreate: false, wheelPan: false, noCompressImage: false };
 try { Object.assign(settings, JSON.parse(localStorage.getItem(GM_SETTINGS_KEY) || "{}")); } catch (_) {}
 function saveSettings() {
   try { localStorage.setItem(GM_SETTINGS_KEY, JSON.stringify(settings)); } catch (_) {}
@@ -532,7 +582,7 @@ function onRailAction(act, btn) {
     const target = document.getElementById(act === "theme" ? "themePanel" : "layoutPanel");
     if (target) { target.scrollIntoView({ behavior: "smooth", block: "center" }); flashPanel(target); }
   } else if (act === "outline") {
-    openOutline(editor);
+    import("./outline.js").then((m) => m.openOutline(editor));
   } else if (act === "settings") {
     toggleSettingsPanel(btn);
   }
@@ -558,6 +608,7 @@ function toggleSettingsPanel(btn) {
     chk("grid", "显示网格", "在画布上显示点状网格") +
     chk("autoEdit", "新节点自动进入编辑", "新建节点后直接开始输入文字") +
     chk("dblCreate", "双击空白处创建子节点", "双击画布空白处在中心主题下新增节点") +
+    chk("noCompressImage", "上传图片不压缩", "关闭后插入的图片默认压缩到 100KB 以内；开启则按原图上传") +
     `<div class="gm-set-t">鼠标滚轮行为</div>` +
     `<div class="gm-set-seg">` +
     `<button data-wheel="0"${!settings.wheelPan ? ' class="active"' : ""}>缩放视图</button>` +
@@ -1044,6 +1095,8 @@ function showFcMenu(x, y) {
       editor.render();
     } });
     if (editor._selEdgeId()) items.push({ label: "编辑连线样式", kbd: "双击连线", act: () => { refreshWbStylePanel(); flashPanel(document.getElementById("wbStylePanel")); } });
+    // 选中节点 / 连线时提供「删除」（含图片节点会自动二次确认）
+    if (editor.selection.size > 0) items.push({ label: "删除", kbd: "Del", danger: true, act: () => editor.deleteSelection() });
     return items;
   });
 }
@@ -1084,6 +1137,9 @@ function showMmMenu(x, y) {
       { label: "复制为 JSON", act: copyDocJSON },
     ] });
     if (editor._selEdgeId()) items.push({ label: "编辑连线样式", kbd: "双击连线", act: () => { refreshWbStylePanel(); flashPanel(document.getElementById("wbStylePanel")); } });
+    // 选中节点 / 连线时提供「删除」（含图片节点会自动二次确认）
+    const mmDelSel = selIds.length > 0 || editor._selEdgeId();
+    if (mmDelSel && !g) items.push({ label: "删除", kbd: "Del", danger: true, act: () => editor.deleteSelection() });
     return items;
   });
 }
@@ -1526,7 +1582,7 @@ function wireChrome() {
   document.getElementById("zoomFit").addEventListener("click", () => editor.fitView());
   document.getElementById("layoutBtn").addEventListener("click", () => { layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); });
   buildLayouts();
-  document.getElementById("outlineBtn").addEventListener("click", () => openOutline(editor));
+  document.getElementById("outlineBtn").addEventListener("click", () => import("./outline.js").then((m) => m.openOutline(editor)));
   document.getElementById("delBtn").addEventListener("click", () => editor.deleteSelection());
   document.querySelectorAll("#modes button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
   // 白板插入图片：本地图片转 dataURL 后放进画布中心
@@ -1535,23 +1591,26 @@ function wireChrome() {
     e.target.value = "";
     if (!f || !editor) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       const img = new Image();
-      img.onload = () => {
+      img.onload = async () => {
+        // 默认压缩到 100KB 以内（按 原大小/上限 自动算缩放与质量）；设置项可关闭压缩
+        const src = await compressImageDataURL(reader.result, { noCompress: !!settings.noCompressImage });
         // 脑图模式：图片附加到选中节点（图片在上、文字在下）
         if (editor.mode === "mindmap") {
           const selId = [...editor.selection][0];
           if (!selId) { toast("请先选中一个节点", "info"); return; }
           const maxW = 160;
           const sc = Math.min(1, maxW / (img.naturalWidth || maxW));
-          editor.setNodeStyle({ image: reader.result, imageW: Math.round(img.naturalWidth * sc), imageH: Math.round(img.naturalHeight * sc) });
+          editor.setNodeStyle({ image: src, imageW: Math.round(img.naturalWidth * sc), imageH: Math.round(img.naturalHeight * sc) });
           return;
         }
         const c = editor.viewCenterWorld();
-        editor.addImageNode(reader.result, c.x, c.y, img.naturalWidth, img.naturalHeight);
+        editor.addImageNode(src, c.x, c.y, img.naturalWidth, img.naturalHeight);
         editor.setTool("select");
         refreshWbActive();
       };
+      img.onerror = () => toast("图片解码失败，请换一张试试", "error");
       img.src = reader.result;
     };
     reader.readAsDataURL(f);
@@ -1673,10 +1732,13 @@ function wireKeys() {
   document.getElementById("titleInput").value = map.title || "未命名导图";
   document.getElementById("shareBtn").textContent = map.is_public ? "已分享" : "分享";
 
-  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), mode: map.type || "mindmap", onNoteBadge: (id) => { const n = editor.nodeById(id); if (n) openNoteModal(n); }, onEdgeEdit: (eid, childId) => openEdgeModal(eid, childId), onGroupEdit: (gid) => openGroupModal(gid) });
+  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), mode: map.type || "mindmap", onNoteBadge: (id) => { const n = editor.nodeById(id); if (n) openNoteModal(n); }, onEdgeEdit: (eid, childId) => openEdgeModal(eid, childId), onGroupEdit: (gid) => openGroupModal(gid), onImageZoom: openImageLightbox, onConfirmImageDelete: () => confirmDialog({ title: "删除含图片的节点", message: "该节点包含图片，确定要删除吗？此操作不可撤销。", okText: "删除", danger: true }) });
   window.__gmEditor = editor; // 测试钩子：headless 验证用
   wireContextMenus();
   editor.load(map.data);
+  // 数据已加载并渲染完成，隐藏首屏 loading 遮罩
+  const gmLoadingEl = document.getElementById("gmLoading");
+  if (gmLoadingEl) gmLoadingEl.classList.add("gm-loading-hidden");
   dirty = false; // 初始加载触发的 onChange 不算脏，避免无谓落盘
   lastSavedAt = map.updated_at || Date.now();
   setStatus("saved", "已保存");
