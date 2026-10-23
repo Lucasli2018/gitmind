@@ -190,6 +190,7 @@ body.gm-wb-mode .gm-side-rail { display: none; }              /* 右侧图标工
   background: #fff; border: 1px solid #e8ecf1; border-radius: 12px;
   box-shadow: 0 10px 32px rgba(16,30,54,.16);
   display: flex; flex-direction: column;
+  max-height: calc(100vh - 16px); overflow-y: auto; scrollbar-width: thin;
 }
 .gm-ctx-menu button {
   display: flex; align-items: center; justify-content: space-between; gap: 18px;
@@ -199,6 +200,11 @@ body.gm-wb-mode .gm-side-rail { display: none; }              /* 右侧图标工
 .gm-ctx-menu button:hover { background: #eef2f6; }
 .gm-ctx-menu button .kbd { font-size: 11px; color: #9aa4b2; }
 .gm-ctx-sep { height: 1px; background: #eef1f5; margin: 5px 8px; }
+.gm-ctx-menu button .arr { color: #9aa4b2; font-size: 15px; line-height: 1; }
+.gm-ctx-menu button:has(.arr) { font-weight: 500; }
+.gm-ctx-menu button:has(.arr):hover { background: #e6f7f4; color: #0b7d73; }
+.gm-ctx-sub { animation: gmCtxIn .12s ease; }
+@keyframes gmCtxIn { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
 .gm-wb-btn {
   position: relative; width: 38px; height: 38px; border: none; background: transparent;
   border-radius: 10px; color: #4b5563; display: flex; align-items: center; justify-content: center;

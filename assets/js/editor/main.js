@@ -968,35 +968,46 @@ function showWbMenu(x, y) {
     const single = hasSel && editor.selection.size === 1 ? editor.nodeById([...editor.selection][0]) : null;
     const items = [];
     if (hasSel) items.push({ label: "剪切", kbd: "Ctrl+X", act: cutWbSelection });
-    if (wbClipboard.length) items.push({ label: "粘贴", kbd: "Ctrl+V", act: () => pasteWbClipboard() });
     if (hasSel) items.push({ label: "复制", kbd: "Ctrl+C", act: copyWbSelection });
-    items.push({ sep: true });
-    items.push({ label: "复制为 PNG 到剪贴板", kbd: "Shift+Alt+C", act: () => copyWbExport(true) });
-    items.push({ label: "复制为 SVG 到剪贴板", act: () => copyWbExport(false) });
-    if (hasSel) items.push({ label: "复制文本到剪贴板", act: copySelText });
-    if (single) items.push({ label: "拷贝样式", kbd: "Ctrl+Shift+C", act: copyNodeStyle });
-    if (hasSel && wbStyleClipboard) items.push({ label: "粘贴样式", kbd: "Ctrl+Shift+V", act: pasteNodeStyle });
+    if (wbClipboard.length) items.push({ label: "粘贴", kbd: "Ctrl+V", act: () => pasteWbClipboard() });
     if (single) items.push({ label: "编辑", kbd: "Enter", act: () => editor.beginTextEdit(single.id) });
-    if (hasSel) items.push({ label: single && single.locked ? "取消锁定" : "锁定", kbd: "Ctrl+Shift+L", act: toggleLockSelection });
-    items.push({ label: (editor.showGrid ? "✓ " : "") + "显示网格", kbd: "Ctrl+'", keep: true, act: () => editor.toggleGrid() });
-    if (hasSel) {
-      items.push({ sep: true });
-      items.push({ label: "下一层", kbd: "Ctrl+[", act: () => editor._reorderLayer("backward") });
-      items.push({ label: "上一层", kbd: "Ctrl+]", act: () => editor._reorderLayer("forward") });
-      items.push({ label: "置于顶层", kbd: "Ctrl+Shift+]", act: () => editor._reorderLayer("front") });
-      items.push({ label: "置于底层", kbd: "Ctrl+Shift+[", act: () => editor._reorderLayer("back") });
-      items.push({ sep: true });
-      items.push({ label: "水平翻转", kbd: "Shift+H", act: () => flipSelection("x") });
-      items.push({ label: "垂直翻转", kbd: "Shift+V", act: () => flipSelection("y") });
-      items.push({ label: "创建副本", kbd: "Ctrl+D", act: () => editor.duplicateSelection() });
+    if (hasSel) items.push({ label: "创建副本", kbd: "Ctrl+D", act: () => editor.duplicateSelection() });
+    items.push({ sep: true });
+    // 导出 / 样式 / 图层 / 变换 / 锁定 折叠为子菜单，缩短菜单长度
+    const exportSub = [{ label: "复制为 PNG", kbd: "Shift+Alt+C", act: () => copyWbExport(true) },
+      { label: "复制为 SVG", act: () => copyWbExport(false) }];
+    if (hasSel) exportSub.push({ label: "复制文本到剪贴板", act: copySelText });
+    items.push({ label: "导出", sub: exportSub });
+    if (single || (hasSel && wbStyleClipboard)) {
+      const styleSub = [];
+      if (single) styleSub.push({ label: "拷贝样式", kbd: "Ctrl+Shift+C", act: copyNodeStyle });
+      if (hasSel && wbStyleClipboard) styleSub.push({ label: "粘贴样式", kbd: "Ctrl+Shift+V", act: pasteNodeStyle });
+      items.push({ label: "样式", sub: styleSub });
     }
+    if (hasSel) {
+      items.push({ label: "图层", sub: [
+        { label: "下一层", kbd: "Ctrl+[", act: () => editor._reorderLayer("backward") },
+        { label: "上一层", kbd: "Ctrl+]", act: () => editor._reorderLayer("forward") },
+        { label: "置于顶层", kbd: "Ctrl+Shift+]", act: () => editor._reorderLayer("front") },
+        { label: "置于底层", kbd: "Ctrl+Shift+[", act: () => editor._reorderLayer("back") },
+      ] });
+      items.push({ label: "变换", sub: [
+        { label: "水平翻转", kbd: "Shift+H", act: () => flipSelection("x") },
+        { label: "垂直翻转", kbd: "Shift+V", act: () => flipSelection("y") },
+      ] });
+    }
+    const lockSub = [];
+    if (hasSel) lockSub.push({ label: single && single.locked ? "取消锁定" : "锁定", kbd: "Ctrl+Shift+L", act: toggleLockSelection });
+    lockSub.push({ label: "全部锁定", act: () => setAllLocked(true) });
+    lockSub.push({ label: "全部解锁", act: () => setAllLocked(false) });
+    items.push({ label: "锁定", sub: lockSub });
     items.push({ sep: true });
-    items.push({ label: "全部锁定", keep: true, act: () => setAllLocked(true) });
-    items.push({ label: "全部解锁", keep: true, act: () => setAllLocked(false) });
-    if (hasSel) items.push({ sep: true }, { label: "删除", kbd: "Del", danger: true, act: () => editor.deleteSelection() });
+    items.push({ label: (editor.showGrid ? "✓ " : "") + "显示网格", kbd: "Ctrl+'", keep: true, act: () => editor.toggleGrid() });
+    if (hasSel) items.push({ label: "删除", kbd: "Del", danger: true, act: () => editor.deleteSelection() });
     items.push({ sep: true });
-    items.push({ label: "详细统计信息", kbd: "Alt+/", act: wbStats });
-    if (editor._selEdgeId()) items.push({ label: "编辑连线样式", kbd: "双击连线", act: () => { refreshWbStylePanel(); flashPanel(document.getElementById("wbStylePanel")); } });
+    const moreSub = [{ label: "详细统计信息", kbd: "Alt+/", act: wbStats }];
+    if (editor._selEdgeId()) moreSub.push({ label: "编辑连线样式", kbd: "双击连线", act: () => { refreshWbStylePanel(); flashPanel(document.getElementById("wbStylePanel")); } });
+    items.push({ label: "更多", sub: moreSub });
     return items;
   });
 }
@@ -1009,8 +1020,10 @@ function showFcMenu(x, y) {
     items.push({ label: "撤销", kbd: "Ctrl+Z", act: () => editor.undo() });
     if (wbClipboard.length) items.push({ label: "在此粘贴", kbd: "Ctrl+V", act: () => pasteWbClipboard() });
     items.push({ sep: true });
-    items.push({ label: "复制为图像", kbd: "Shift+Alt+C", act: () => copyWbExport(true) });
-    items.push({ label: "复制为 SVG", act: () => copyWbExport(false) });
+    items.push({ label: "导出", sub: [
+      { label: "复制为图像", kbd: "Shift+Alt+C", act: () => copyWbExport(true) },
+      { label: "复制为 SVG", act: () => copyWbExport(false) },
+    ] });
     items.push({ label: "清除默认风格", act: clearFcStyle });
     items.push({ sep: true });
     items.push({ label: "全选", kbd: "Ctrl+A", keep: true, act: wbSelectAll });
