@@ -250,6 +250,8 @@ export class Editor {
   render() {
     this.sizes.clear();
     for (const n of this.doc.nodes) this.sizes.set(n.id, sizeOf(n, this.doc.type));
+    // 每个节点的后代总数（折叠徽标显示用）
+    this._descCounts = this._calcDescCounts();
 
     let html = "";
     // 白板网格（不进导出）
@@ -512,7 +514,7 @@ export class Editor {
     if (this.doc.type === "whiteboard" && n.locked && !this._forExport) {
       inner += `<g transform="translate(${w - 6},-6)"><circle r="8" fill="#94a3b8" stroke="#fff" stroke-width="1.5"/><text y="3.5" text-anchor="middle" font-size="9">🔒</text></g>`;
     }
-    // 脑图：折叠 / 展开徽标（点击切换子树显隐）
+    // 脑图：折叠 / 展开徽标（点击切换子树显隐）；收起时显示被隐藏的后代节点总数
     if (this.doc.type === "mindmap" && !this._forExport) {
       const hasKids = this.doc.nodes.some((c) => c.parentId === n.id);
       if (hasKids) {
@@ -520,7 +522,12 @@ export class Editor {
         const bx = side === "left" ? -14 : side === "down" ? w / 2 : w + 14;
         const by = side === "down" ? h + 14 : h / 2;
         const col = n.stroke || "#94a3b8";
-        inner += `<g class="gm-collapse-badge" data-collapse="${n.id}"><circle cx="${bx}" cy="${by}" r="8" fill="#fff" stroke="${col}" stroke-width="1.5"/><text x="${bx}" y="${by + 3.5}" text-anchor="middle" font-size="11" font-weight="700" fill="#4b5563">${n.collapsed ? "+" : "−"}</text></g>`;
+        const cnt = this._descCounts ? (this._descCounts.get(n.id) || 0) : 0;
+        const label = n.collapsed ? String(cnt) : "−";
+        // 数字位数多时放宽徽标，避免挤出圆外
+        const r = label.length >= 3 ? 11.5 : label.length === 2 ? 9.5 : 8;
+        const fs = label.length >= 3 ? 9.5 : label.length === 2 ? 10.5 : 11;
+        inner += `<g class="gm-collapse-badge" data-collapse="${n.id}"><title>${n.collapsed ? `已收起 ${cnt} 个后代节点，点击展开` : "点击收起子节点"}</title><circle cx="${bx}" cy="${by}" r="${r}" fill="#fff" stroke="${col}" stroke-width="1.5"/><text x="${bx}" y="${by + fs * 0.35}" text-anchor="middle" font-size="${fs}" font-weight="700" fill="#4b5563">${label}</text></g>`;
       }
     }
     // 选中框（直线/箭头 w、h 可能是负增量，选中框按包围盒画）
@@ -590,6 +597,36 @@ export class Editor {
     const dx = bcx - acx, dy = bcy - acy;
     if (Math.abs(dy) > Math.abs(dx)) return dy >= 0 ? "down" : "up";
     return dx >= 0 ? "right" : "left";
+  }
+
+  // 关联线默认弧线的二次贝塞尔控制点
+  _assocCtrl(ax, ay, bx, by) {
+    const mx = (ax + bx) / 2, my = (ay + by) / 2;
+    const dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1;
+    const bow = Math.min(46, L * 0.18);
+    return { x: mx - dy / L * bow, y: my + dx / L * bow };
+  }
+
+  // 连线的两个拉杆控制点（同时就是两个可拖动圆柄的位置）
+  // 未调节时返回与默认曲线完全一致的控制点，保证调节前后形状连续；
+  // aLev / bLev 是相对端点的偏移（世界单位），用户拖圆柄时写入
+  _edgeCtrl(e, ends) {
+    const { ax, ay, bx, by } = ends;
+    const dx = bx - ax, dy = by - ay;
+    let c1, c2;
+    if (e.assoc) {
+      const q = (e.bend && (e.bend.x || e.bend.y)) ? e.bend : this._assocCtrl(ax, ay, bx, by);
+      // 二次 → 三次等价换算，保证拖动瞬间曲线不跳变
+      c1 = { x: ax + (q.x - ax) * 2 / 3, y: ay + (q.y - ay) * 2 / 3 };
+      c2 = { x: bx + (q.x - bx) * 2 / 3, y: by + (q.y - by) * 2 / 3 };
+    } else {
+      // 普通连线（流程图等）：控制点沿连线方向均匀分布，未调节时退化为直线
+      c1 = { x: ax + dx * 0.28, y: ay + dy * 0.28 };
+      c2 = { x: bx - dx * 0.28, y: by - dy * 0.28 };
+    }
+    if (e.aLev) c1 = { x: ax + e.aLev.x, y: ay + e.aLev.y };
+    if (e.bLev) c2 = { x: bx + e.bLev.x, y: by + e.bLev.y };
+    return { c1, c2 };
   }
 
   // 连线端点（世界坐标）：assoc 关联线吸附到两侧节点边框；脑图父子连线按几何方向接出；
@@ -672,16 +709,19 @@ export class Editor {
     const am = e.arrowMode || (e.arrow === false ? "none" : (e.assoc || e.derived ? "none" : "end"));
     const mkEnd = am === "end" || am === "both" ? ` marker-end="url(#gm-arrow)"` : "";
     const mkStart = am === "start" || am === "both" ? ` marker-start="url(#gm-arrow)"` : "";
-    // 关联线：任意两节点间的曲线（端点自动吸附到两侧节点边框），拖中点可调节弯曲
+    // 关联线：任意两节点间的曲线（端点自动吸附到两侧节点边框），拉杆可调弧度
     if (e.assoc) {
-      const { ax, ay, bx, by } = this._edgeEnds(e);
+      const ends = this._edgeEnds(e);
+      const { ax, ay, bx, by } = ends;
       let d;
-      if (e.bend && (e.bend.x || e.bend.y)) d = `M ${ax.toFixed(1)},${ay.toFixed(1)} Q ${e.bend.x.toFixed(1)},${e.bend.y.toFixed(1)} ${bx.toFixed(1)},${by.toFixed(1)}`;
+      if (e.aLev || e.bLev) {
+        // 已用拉杆调过弧度：三次贝塞尔，控制点就是两个圆柄
+        const { c1, c2 } = this._edgeCtrl(e, ends);
+        d = `M ${ax.toFixed(1)},${ay.toFixed(1)} C ${c1.x.toFixed(1)},${c1.y.toFixed(1)} ${c2.x.toFixed(1)},${c2.y.toFixed(1)} ${bx.toFixed(1)},${by.toFixed(1)}`;
+      } else if (e.bend && (e.bend.x || e.bend.y)) d = `M ${ax.toFixed(1)},${ay.toFixed(1)} Q ${e.bend.x.toFixed(1)},${e.bend.y.toFixed(1)} ${bx.toFixed(1)},${by.toFixed(1)}`;
       else {
-        const mx = (ax + bx) / 2, my = (ay + by) / 2;
-        const dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1;
-        const bow = Math.min(46, L * 0.18);
-        d = `M ${ax.toFixed(1)},${ay.toFixed(1)} Q ${(mx - dy / L * bow).toFixed(1)},${(my + dx / L * bow).toFixed(1)} ${bx.toFixed(1)},${by.toFixed(1)}`;
+        const q = this._assocCtrl(ax, ay, bx, by);
+        d = `M ${ax.toFixed(1)},${ay.toFixed(1)} Q ${q.x.toFixed(1)},${q.y.toFixed(1)} ${bx.toFixed(1)},${by.toFixed(1)}`;
       }
       const mid = this._quadMid(ax, ay, bx, by, e.bend);
       const lbl = e.label
@@ -690,8 +730,13 @@ export class Editor {
       return hitPath(d) + `<path d="${d}" fill="none" stroke="${stroke}" ${`stroke-width="${sw}"`}${dash} stroke-linecap="round"${mkStart}${mkEnd}${dataEdge}/>${lbl}`;
     }
     let d;
-    const { ax, ay, bx, by } = this._edgeEnds(e);
-    if (e.bend && (e.bend.x || e.bend.y)) {
+    const ends = this._edgeEnds(e);
+    const { ax, ay, bx, by } = ends;
+    if ((e.aLev || e.bLev) && this.doc.type !== "mindmap") {
+      // 流程图等普通连线：拉杆调过弧度 -> 三次贝塞尔
+      const { c1, c2 } = this._edgeCtrl(e, ends);
+      d = `M ${ax.toFixed(1)},${ay.toFixed(1)} C ${c1.x.toFixed(1)},${c1.y.toFixed(1)} ${c2.x.toFixed(1)},${c2.y.toFixed(1)} ${bx.toFixed(1)},${by.toFixed(1)}`;
+    } else if (e.bend && (e.bend.x || e.bend.y)) {
       // 自由弯曲：拖中点后的二次贝塞尔
       d = `M ${ax},${ay} Q ${e.bend.x.toFixed(1)},${e.bend.y.toFixed(1)} ${bx},${by}`;
     } else if (this.doc.type === "mindmap") {
@@ -710,14 +755,9 @@ export class Editor {
         d = `M ${ax},${ay} C ${ax + dx * 0.5},${ay} ${bx - dx * 0.5},${by} ${bx},${by}`;
       }
     } else {
-      // 流程图连线：端点主导方向决定 S 曲线朝向（左右端口横向弯，上下端口纵向弯）
-      if (Math.abs(bx - ax) >= Math.abs(by - ay)) {
-        const mx = (ax + bx) / 2;
-        d = `M ${ax},${ay} C ${mx},${ay} ${mx},${by} ${bx},${by}`;
-      } else {
-        const my = (ay + by) / 2;
-        d = `M ${ax},${ay} C ${ax},${my} ${bx},${my} ${bx},${by}`;
-      }
+      // 流程图等普通连线：三次贝塞尔（控制点即两个拉杆；未调节时控制点共线 => 直线）
+      const { c1, c2 } = this._edgeCtrl(e, ends);
+      d = `M ${ax.toFixed(1)},${ay.toFixed(1)} C ${c1.x.toFixed(1)},${c1.y.toFixed(1)} ${c2.x.toFixed(1)},${c2.y.toFixed(1)} ${bx.toFixed(1)},${by.toFixed(1)}`;
     }
     const marker = `${mkStart}${mkEnd}`;
     let label = "";
@@ -725,52 +765,33 @@ export class Editor {
       const mid = this._quadMid(ax, ay, bx, by, e.bend);
       label = `<rect x="${mid.x - 14}" y="${mid.y - 11}" width="28" height="20" rx="5" fill="#fff" stroke="${sel ? "#11b5a4" : "#e2e8f0"}"/><text x="${mid.x}" y="${mid.y + 4}" text-anchor="middle" font-size="12" fill="#64748b">${escapeXml(e.label)}</text>`;
     }
-    return hitPath(d) + `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${sw}"${dash}${marker}/>${label}`;
+    return hitPath(d) + `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${sw}"${dash}${marker}${dataEdge}/>${label}`;
   }
 
-  // 选中连线的调节点（所有类型统一：两端各一个可伸缩端点柄）
-  // 外观参考 XMind：端点外侧画小圆柄，用细引导线连回真实端点；端点被拉伸过时再多显示一个中点柄调节弯曲
+  // 选中连线时的两个「拉杆」圆柄（仅关联线 / 流程图连线这类真正的连线；
+  // 脑图父子线属于结构连接，不给调节点）
+  // 圆柄位置 = 三次贝塞尔控制点，圆柄与端点之间画细引导线；
+  // 拖圆柄 = 拉伸/收缩拉杆调节弧度，拖到其它节点上松手 = 重新吸附端点
   edgeHandleHTML() {
     const eid = this._selEdgeId();
     if (!eid) return "";
-    let e = this.edgeById(eid);
-    let derivedChild = null;
-    if (!e && eid.startsWith("p-")) {
-      derivedChild = this.nodeById(eid.slice(2));
-      if (derivedChild && derivedChild.parentId && this.nodeById(derivedChild.parentId))
-        e = {
-          id: eid, from: derivedChild.parentId, to: derivedChild.id, derived: true,
-          bend: derivedChild.edgeBend || null,
-          aPt: derivedChild.edgeAPt || null, aPtRel: derivedChild.edgeAPtRel || null,
-          bPt: derivedChild.edgeBPt || null, bPtRel: derivedChild.edgeBPtRel || null,
-        };
-    }
+    const e = this.edgeById(eid);
+    // 脑图派生线（父子连接）无需调节点
     if (!e) return "";
     const a = this.nodeById(e.from), b = this.nodeById(e.to);
     if (!a || !b) return "";
-    const { ax, ay, bx, by } = this._edgeEnds(e);
-    // 端点柄放在连线一侧（垂直方向外移），用细引导线连回真实端点：不压住线条/节点，造型同 XMind
-    const OFF = 24;
-    const dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1;
-    const ux = dx / L, uy = dy / L;
-    let px = -uy, py = ux;                    // 垂线方向
-    if (py < 0) { px = -px; py = -py; }        // 统一取朝下的一侧，视觉稳定
-    const A = { x: ax + px * OFF, y: ay + py * OFF };
-    const B = { x: bx + px * OFF, y: by + py * OFF };
-    const lead = (p, q) => `<line class="gm-edge-lead" x1="${p.x.toFixed(1)}" y1="${p.y.toFixed(1)}" x2="${q.x.toFixed(1)}" y2="${q.y.toFixed(1)}" stroke="#11b5a4" stroke-width="1.3" stroke-opacity="0.65" pointer-events="none"/>`;
+    const ends = this._edgeEnds(e);
+    const { ax, ay, bx, by } = ends;
+    const { c1, c2 } = this._edgeCtrl(e, ends);
+    const lead = (x1, y1, x2, y2) => `<line class="gm-edge-lead" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#11b5a4" stroke-width="1.3" stroke-opacity="0.7" pointer-events="none"/>`;
     const H = (hx, hy, kind, title) =>
-      `<circle class="gm-edge-handle" data-edge="${eid}" data-h="${kind}" title="${title}" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="5.5" fill="#fff" stroke="#11b5a4" stroke-width="1.8"/>` +
+      `<circle class="gm-edge-handle" data-edge="${eid}" data-h="${kind}" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="5.5" fill="#fff" stroke="#11b5a4" stroke-width="1.8"><title>${title}</title></circle>` +
       // 透明放大命中区：小圆柄更好抓（视觉不变）
       `<circle class="gm-edge-handle-hit" data-edge="${eid}" data-h="${kind}" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="12" fill="transparent" stroke="none" pointer-events="all"/>`;
-    let out = lead({ x: ax, y: ay }, A) + lead({ x: bx, y: by }, B);
-    out += H(A.x, A.y, "p0", "起点：拖动可伸缩调整（吸附到其他节点可重绑；脑图父子线只拉伸）");
-    out += H(B.x, B.y, "p1", "终点：拖动可伸缩调整（吸附到其他节点可重绑；脑图父子线只拉伸）");
-    // 已做过弯曲的连线：保留中点柄继续调节弧度
-    if (e.bend && (e.bend.x || e.bend.y)) {
-      const mid = this._quadMid(ax, ay, bx, by, e.bend);
-      out += `<circle class="gm-edge-handle" data-edge="${eid}" data-h="mid" title="中点：调节弯曲" cx="${mid.x.toFixed(1)}" cy="${mid.y.toFixed(1)}" r="5" fill="#fff" stroke="#11a3b5" stroke-width="1.8" stroke-dasharray="2 2"/>`;
-    }
-    return out;
+    const TIP0 = "起点拉杆：拖动拉伸调节弧度；拖到其它节点上松手可重新吸附";
+    const TIP1 = "终点拉杆：拖动拉伸调节弧度；拖到其它节点上松手可重新吸附";
+    return lead(ax, ay, c1.x, c1.y) + lead(bx, by, c2.x, c2.y) +
+      H(c1.x, c1.y, "p0", TIP0) + H(c2.x, c2.y, "p1", TIP1);
   }
 
   // 连线样式：批量应用到选中的连线（stroke/strokeWidth/strokeStyle）；bend: null 移除 / "straight" 拉直
@@ -927,6 +948,22 @@ export class Editor {
     for (const n of this.doc.nodes) { if (n.parentId) { if (!m.has(n.parentId)) m.set(n.parentId, []); m.get(n.parentId).push(n.id); } }
     return m;
   }
+  // 每个节点的「后代节点总数」（含间接后代），用于折叠徽标上显示数字
+  _calcDescCounts() {
+    const kids = this.childrenMap();
+    const memo = new Map();
+    const count = (id, guard) => {
+      if (memo.has(id)) return memo.get(id);
+      if (guard.has(id)) return 0; // 数据异常成环时兜底
+      guard.add(id);
+      let c = 0;
+      for (const k of kids.get(id) || []) c += 1 + count(k, guard);
+      memo.set(id, c);
+      return c;
+    };
+    for (const n of this.doc.nodes) count(n.id, new Set());
+    return memo;
+  }
   descendants(id, set = new Set()) {
     const cm = this.childrenMap();
     for (const c of cm.get(id) || []) { set.add(c); this.descendants(c, set); }
@@ -1060,17 +1097,17 @@ export class Editor {
     const edgeHandleEl = target.closest && target.closest(".gm-edge-handle, .gm-edge-handle-hit");
     if (edgeHandleEl) {
       const eid0 = edgeHandleEl.getAttribute("data-edge");
-      const kind0 = edgeHandleEl.getAttribute("data-h") || "mid";
+      const kind0 = edgeHandleEl.getAttribute("data-h") || "p0";
       this._edgeDrag = { id: eid0, kind: kind0, moved: false, snapTo: null, off: null };
       if (kind0 === "p0" || kind0 === "p1") {
-        let e0 = this.edgeById(eid0);
-        if (!e0 && eid0.startsWith("p-")) {
-          const c0 = this.nodeById(eid0.slice(2));
-          if (c0 && c0.parentId) e0 = { from: c0.parentId, to: c0.id, derived: true, aPt: c0.edgeAPt, aPtRel: c0.edgeAPtRel, bPt: c0.edgeBPt, bPtRel: c0.edgeBPtRel };
-        }
+        const e0 = this.edgeById(eid0);
         if (e0) {
-          const ends0 = this._edgeEnds(e0), w0 = this.toWorld(e.clientX, e.clientY);
-          this._edgeDrag.off = kind0 === "p0" ? { x: w0.x - ends0.ax, y: w0.y - ends0.ay } : { x: w0.x - ends0.bx, y: w0.y - ends0.by };
+          // 拉杆圆柄位置 = 贝塞尔控制点；记录「光标 - 控制点」偏移，拖动时手感连续不跳
+          const ends0 = this._edgeEnds(e0);
+          const { c1, c2 } = this._edgeCtrl(e0, ends0);
+          const w0 = this.toWorld(e.clientX, e.clientY);
+          const c = kind0 === "p0" ? c1 : c2;
+          this._edgeDrag.off = { x: w0.x - c.x, y: w0.y - c.y };
         }
       }
       return;
@@ -1268,51 +1305,24 @@ export class Editor {
       if (hid !== this._linkHover) { this._linkHover = hid; this.render(); }
       return;
     }
-    // 连线调节点拖拽：mid 调弯曲（反解二次贝塞尔控制点 C = 2M - (P0+P1)/2）；
-    // p0 / p1 拖头尾端点——吸附到附近节点边框，或落到空白处固定。
-    // 脑图派生线（id 以 "p-" 开头）每次渲染都会重建，bend 必须写入子节点 edgeBend 才能持久化
+    // 连线拉杆拖拽：拖动圆柄 = 拉伸/收缩拉杆调节弧度（写入 aLev / bLev）；
+    // 松手时若圆柄落在其它节点上，则把该端点重新吸附到那个节点（见 onUp）
     if (this._edgeDrag) {
       const dId = this._edgeDrag.id;
-      const derivedChild = !this.edgeById(dId) && dId.startsWith("p-") ? this.nodeById(dId.slice(2)) : null;
-      const ed = this.edgeById(dId) || (derivedChild ? { id: dId, from: derivedChild.parentId, to: derivedChild.id, derived: true } : null);
+      const ed = this.edgeById(dId);
       const off = this._edgeDrag.off || { x: 0, y: 0 };
-      if (ed && this._edgeDrag.kind === "mid") {
+      if (ed) {
         const ends = this._edgeEnds(ed);
-        const w = this.toWorld(e.clientX, e.clientY);
-        const bend = { x: 2 * w.x - (ends.ax + ends.bx) / 2, y: 2 * w.y - (ends.ay + ends.by) / 2 };
-        if (derivedChild) derivedChild.edgeBend = bend; // 存到节点上，重渲染不丢
-        else ed.bend = bend;
-        this._edgeDrag.moved = true;
-        this.render();
-      } else if (ed) {
         const wc = this.toWorld(e.clientX, e.clientY);
-        let pt = { x: wc.x - off.x, y: wc.y - off.y }; // 端点跟着手柄走，不瞬移到光标
+        const ctrl = { x: wc.x - off.x, y: wc.y - off.y }; // 目标控制点位置
         const isP0 = this._edgeDrag.kind === "p0";
+        const ap = isP0 ? { x: ends.ax, y: ends.ay } : { x: ends.bx, y: ends.by };
+        const lev = { x: ctrl.x - ap.x, y: ctrl.y - ap.y };
+        if (isP0) ed.aLev = lev; else ed.bLev = lev;
         const other = isP0 ? ed.to : ed.from;
         const snapId = this.snapNodeAt(e.clientX, e.clientY);
-        if (snapId && snapId !== other) {
-          const sn = this.nodeById(snapId), ss = this.sizes.get(snapId);
-          if (sn && ss) {
-            const scx = sn.x + ss.w / 2, scy = sn.y + ss.h / 2;
-            pt = this._rectEdgePoint(ss.w, ss.h, scx, scy, wc.x, wc.y); // 吸附到目标节点边框
-          }
-        }
-        if (derivedChild) {
-          // 脑图父子线：结构关系不可改（不能重绑到第三方节点），只做端点伸缩，锚点存子节点上
-          const a = this.nodeById(ed.from), b = this.nodeById(ed.to);
-          const base = isP0 ? a : b;
-          if (base) {
-            const rel = { dx: pt.x - base.x, dy: pt.y - base.y };
-            if (isP0) { derivedChild.edgeAPtRel = rel; delete derivedChild.edgeAPt; }
-            else { derivedChild.edgeBPtRel = rel; delete derivedChild.edgeBPt; }
-          }
-          this._edgeDrag.moved = true;
-          this._edgeDrag.snapTo = null;
-        } else {
-          if (isP0) { ed.aPt = pt; delete ed.aPtRel; } else { ed.bPt = pt; delete ed.bPtRel; }
-          this._edgeDrag.moved = true;
-          this._edgeDrag.snapTo = snapId && snapId !== other ? snapId : null;
-        }
+        this._edgeDrag.snapTo = snapId && snapId !== other ? snapId : null;
+        this._edgeDrag.moved = true;
         this.render();
       }
       return;
@@ -1448,42 +1458,22 @@ export class Editor {
       if (d.moved) {
         const ed = this.edgeById(d.id);
         if (ed && (d.kind === "p0" || d.kind === "p1")) {
-          // 端点拖拽收尾：
-          // 吸附到第三方节点 -> 重新绑定 from/to（清掉旧端口与固定端点）；
-          // 吸附到端点原本挂着的节点 -> 保留边框落点（同节点上调整接出位置，不能回弹复原）；
-          // 落在空白处 -> 保留固定端点；吸附到对端节点（无效）-> 回退自动吸附
+          // 拉杆拖拽收尾：
+          // 圆柄落在第三方节点上 -> 该端点重新吸附到那个节点（清掉该侧拉杆，恢复默认曲线）
+          // 圆柄落在对端节点上（无效）-> 保持拉杆，不做重绑
+          // 圆柄落在空白处 -> 保留拉杆弧度（这就是伸缩调节弧度的结果）
           const isP0 = d.kind === "p0";
-          const otherRef = isP0 ? ed.to : ed.from;  // 对端节点
-          const origRef = isP0 ? ed.from : ed.to;   // 端点原本挂着的节点
-          const dropPt = isP0 ? ed.aPt : ed.bPt;    // 拖拽中写入的世界坐标落点
-          // 吸附成功：把落点转为相对锚点（aPtRel/bPtRel，相对节点左上角），节点移动连线跟随
-          const anchorRel = (nid) => {
-            const nn = this.nodeById(nid);
-            if (!nn || !dropPt) return false;
-            const rel = { dx: dropPt.x - nn.x, dy: dropPt.y - nn.y };
-            if (isP0) { ed.aPtRel = rel; delete ed.aPt; } else { ed.bPtRel = rel; delete ed.bPt; }
-            return true;
-          };
-          const resetAuto = () => {
-            if (isP0) { delete ed.aPt; delete ed.aPtRel; } else { delete ed.bPt; delete ed.bPtRel; }
-          };
-          if (d.snapTo && d.snapTo !== otherRef) {
-            if (d.snapTo === origRef) {
-              anchorRel(origRef); // 原节点边框落点：相对锚点，随节点移动
+          const otherRef = isP0 ? ed.to : ed.from;   // 对端节点
+          const origRef = isP0 ? ed.from : ed.to;    // 端点原本挂着的节点
+          const clearLev = () => { if (isP0) { delete ed.aLev; delete ed.aPt; delete ed.aPtRel; } else { delete ed.bLev; delete ed.bPt; delete ed.bPtRel; } };
+          if (d.snapTo && d.snapTo !== otherRef && d.snapTo !== origRef) {
+            const dup = this.doc.edges.some((x) => x !== ed && x.assoc && x.from === (isP0 ? d.snapTo : ed.from) && x.to === (isP0 ? ed.to : d.snapTo));
+            if (!dup) {
+              if (isP0) { ed.from = d.snapTo; delete ed.fromPort; } else { ed.to = d.snapTo; delete ed.toPort; }
+              clearLev(); // 端点回到新节点边框，该侧拉杆复位
             } else {
-              const dup = this.doc.edges.some((x) => x !== ed && x.assoc && x.from === (isP0 ? d.snapTo : ed.from) && x.to === (isP0 ? ed.to : d.snapTo));
-              if (!dup) {
-                if (isP0) { ed.from = d.snapTo; delete ed.fromPort; } else { ed.to = d.snapTo; delete ed.toPort; }
-                anchorRel(d.snapTo); // 重绑到新节点：同样用相对锚点，随新节点移动
-              } else {
-                resetAuto(); // 已存在重复关联线：不重绑，回退自动吸附
-              }
+              clearLev(); // 已存在重复关联线：不重绑，只把拉杆复位
             }
-          } else if (d.snapTo === otherRef) {
-            resetAuto(); // 吸附到了对端节点（无效）：回退为自动吸附
-          } else if (!d.snapTo) {
-            // 落在空白处：保留世界坐标固定端点，清掉可能残留的相对锚点
-            if (isP0) delete ed.aPtRel; else delete ed.bPtRel;
           }
         }
         this.render(); this.onChange(); this.pushHistory();
