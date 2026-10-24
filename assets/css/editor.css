@@ -18,7 +18,8 @@ body {
 }
 .gm-title:focus { outline: none; border-color: #11b5a4; background: #fff; }
 .gm-modes { display: inline-flex; background: #eef2f6; border-radius: 999px; padding: 4px; }
-.gm-modes button { border: none; background: transparent; padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; color: #4b5563; }
+/* 模式标签仅作当前模式指示，不可点击切换（切换类型请回首页新建） */
+.gm-modes button { border: none; background: transparent; padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; color: #4b5563; cursor: default; }
 .gm-modes button.active { background: #fff; color: #0b7d73; box-shadow: 0 1px 3px rgba(16,30,54,.1); }
 .gm-spacer { flex: 1; }
 .gm-status { font-size: 13px; color: #8a94a6; white-space: nowrap; }
@@ -53,6 +54,12 @@ body {
 .gm-node:active { cursor: grabbing; }
 .gm-port { opacity: 0; cursor: crosshair; transition: opacity .12s; }
 .gm-node:hover .gm-port, .gm-node.sel .gm-port { opacity: 1; }
+/* 形状工具（画框/矩形/菱形/圆/箭头/直线/流程图形）激活：画布任何位置（含组件上方）都是十字星 */
+.gm-svg.cur-cross, .gm-svg.cur-cross * { cursor: crosshair !important; }
+/* 画笔/文字/橡皮：光标显示为工具栏样式（svg 及其子元素继承容器上的自定义光标） */
+.gm-svg.cur-tool, .gm-svg.cur-tool * { cursor: inherit !important; }
+/* 右键拖拽平移中：整块画布显示为抓手 */
+.gm-svg.panning, .gm-svg.panning * { cursor: grabbing !important; }
 
 .gm-right {
   width: 220px; background: #fff; border-left: 1px solid #e8ecf1; padding: 16px; overflow-y: auto;
