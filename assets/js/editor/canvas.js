@@ -74,6 +74,8 @@ export class Editor {
     this.vp = svg.querySelector("#gm-vp");
 
     svg.addEventListener("pointerdown", (e) => this.onDown(e));
+    // 右键按下即阻止默认行为：抑制浏览器/鼠标手势插件把"右键拖拽"解释成后退/前进
+    container.addEventListener("mousedown", (e) => { if (e.button === 2) e.preventDefault(); });
     window.addEventListener("pointermove", (e) => this.onMove(e));
     window.addEventListener("pointerup", (e) => this.onUp(e));
     svg.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
@@ -546,9 +548,9 @@ export class Editor {
     const sa = this.sizes.get(a.id), sb = this.sizes.get(b.id);
     if (e.assoc) {
       const acx = a.x + sa.w / 2, acy = a.y + sa.h / 2, bcx = b.x + sb.w / 2, bcy = b.y + sb.h / 2;
-      // 头/尾调节点拖拽后的固定端点（世界坐标）优先；未调节过则吸附到节点边框
-      const pa = e.aPt || this._rectEdgePoint(sa.w, sa.h, acx, acy, bcx, bcy);
-      const pb = e.bPt || this._rectEdgePoint(sb.w, sb.h, bcx, bcy, acx, acy);
+      // 头/尾调节点拖拽后的固定端点：优先相对锚点（aPtRel/bPtRel，随节点移动），其次世界坐标固定点，未调节过则吸附到节点边框
+      const pa = e.aPtRel && a ? { x: a.x + e.aPtRel.dx, y: a.y + e.aPtRel.dy } : (e.aPt || this._rectEdgePoint(sa.w, sa.h, acx, acy, bcx, bcy));
+      const pb = e.bPtRel && b ? { x: b.x + e.bPtRel.dx, y: b.y + e.bPtRel.dy } : (e.bPt || this._rectEdgePoint(sb.w, sb.h, bcx, bcy, acx, acy));
       return { ax: pa.x, ay: pa.y, bx: pb.x, by: pb.y };
     }
     if (this.doc.type === "mindmap") {
@@ -557,10 +559,10 @@ export class Editor {
       if (side === "down") return { ax: a.x + sa.w / 2, ay: a.y + sa.h, bx: b.x + sb.w / 2, by: b.y };
       return { ax: a.x + sa.w, ay: a.y + sa.h / 2, bx: b.x, by: b.y + sb.h / 2 };
     }
-    // 流程图：四向端口（头尾端点被手动拖拽固定过则优先使用固定端点）
+    // 流程图：四向端口（头尾端点优先级：相对锚点 > 世界坐标固定点 > 端口 > 自动选向）
     const acx = a.x + sa.w / 2, acy = a.y + sa.h / 2, bcx = b.x + sb.w / 2, bcy = b.y + sb.h / 2;
-    let pa = e.aPt || (e.fromPort ? this._portPoint(a, sa, e.fromPort) : null);
-    let pb = e.bPt || (e.toPort ? this._portPoint(b, sb, e.toPort) : null);
+    let pa = (e.aPtRel && a) ? { x: a.x + e.aPtRel.dx, y: a.y + e.aPtRel.dy } : (e.aPt || (e.fromPort ? this._portPoint(a, sa, e.fromPort) : null));
+    let pb = (e.bPtRel && b) ? { x: b.x + e.bPtRel.dx, y: b.y + e.bPtRel.dy } : (e.bPt || (e.toPort ? this._portPoint(b, sb, e.toPort) : null));
     if (!pa && !pb) {
       // 自动选向：左右差大走横向端口，上下差大走纵向端口
       const dx = bcx - acx, dy = bcy - acy;
@@ -1202,7 +1204,7 @@ export class Editor {
             pt = this._rectEdgePoint(ss.w, ss.h, scx, scy, w.x, w.y); // 吸附到目标节点边框
           }
         }
-        if (this._edgeDrag.kind === "p0") ed.aPt = pt; else ed.bPt = pt;
+        if (this._edgeDrag.kind === "p0") { ed.aPt = pt; delete ed.aPtRel; } else { ed.bPt = pt; delete ed.bPtRel; }
         this._edgeDrag.moved = true;
         this._edgeDrag.snapTo = snapId && snapId !== other ? snapId : null;
         this.render();
@@ -1321,11 +1323,13 @@ export class Editor {
   onUp(e) {
     // 右键拖拽平移结束：恢复光标；记录拖动时间戳（供 contextmenu 抑制弹菜单）
     if (this._rmb) {
-      if (this._rmb.moved) this._rmbDraggedAt = Date.now();
+      const dragged = this._rmb.moved;
+      if (dragged) this._rmbDraggedAt = Date.now();
       this._rmb = null;
       this.svg.classList.remove("panning");
       this.container.style.cursor = this._rmbCursor || "default";
       this._rmbCursor = null;
+      if (dragged) this.setTool("select"); // 右键拖完画布自动切回选择工具
       return;
     }
     // 备注徽标：pointerup 时打开备注弹框（任何拖拽分支之前处理）
@@ -1356,20 +1360,36 @@ export class Editor {
           const isP0 = d.kind === "p0";
           const otherRef = isP0 ? ed.to : ed.from;  // 对端节点
           const origRef = isP0 ? ed.from : ed.to;   // 端点原本挂着的节点
-          if (d.snapTo && d.snapTo !== otherRef && d.snapTo !== origRef) {
-            const dup = this.doc.edges.some((x) => x !== ed && x.assoc && x.from === (isP0 ? d.snapTo : ed.from) && x.to === (isP0 ? ed.to : d.snapTo));
-            if (!dup) {
-              if (isP0) { ed.from = d.snapTo; delete ed.fromPort; delete ed.aPt; }
-              else { ed.to = d.snapTo; delete ed.toPort; delete ed.bPt; }
+          const dropPt = isP0 ? ed.aPt : ed.bPt;    // 拖拽中写入的世界坐标落点
+          // 吸附成功：把落点转为相对锚点（aPtRel/bPtRel，相对节点左上角），节点移动连线跟随
+          const anchorRel = (nid) => {
+            const nn = this.nodeById(nid);
+            if (!nn || !dropPt) return false;
+            const rel = { dx: dropPt.x - nn.x, dy: dropPt.y - nn.y };
+            if (isP0) { ed.aPtRel = rel; delete ed.aPt; } else { ed.bPtRel = rel; delete ed.bPt; }
+            return true;
+          };
+          const resetAuto = () => {
+            if (isP0) { delete ed.aPt; delete ed.aPtRel; } else { delete ed.bPt; delete ed.bPtRel; }
+          };
+          if (d.snapTo && d.snapTo !== otherRef) {
+            if (d.snapTo === origRef) {
+              anchorRel(origRef); // 原节点边框落点：相对锚点，随节点移动
             } else {
-              // 已存在重复关联线：不重绑，回退自动吸附
-              if (isP0) delete ed.aPt; else delete ed.bPt;
+              const dup = this.doc.edges.some((x) => x !== ed && x.assoc && x.from === (isP0 ? d.snapTo : ed.from) && x.to === (isP0 ? ed.to : d.snapTo));
+              if (!dup) {
+                if (isP0) { ed.from = d.snapTo; delete ed.fromPort; } else { ed.to = d.snapTo; delete ed.toPort; }
+                anchorRel(d.snapTo); // 重绑到新节点：同样用相对锚点，随新节点移动
+              } else {
+                resetAuto(); // 已存在重复关联线：不重绑，回退自动吸附
+              }
             }
           } else if (d.snapTo === otherRef) {
-            // 吸附到了对端节点（无效）：回退为自动吸附
-            if (isP0) delete ed.aPt; else delete ed.bPt;
+            resetAuto(); // 吸附到了对端节点（无效）：回退为自动吸附
+          } else if (!d.snapTo) {
+            // 落在空白处：保留世界坐标固定端点，清掉可能残留的相对锚点
+            if (isP0) delete ed.aPtRel; else delete ed.bPtRel;
           }
-          // 其余情况（空白 / 原节点边框落点）：保留拖拽中写入的 aPt / bPt 固定端点
         }
         this.render(); this.onChange(); this.pushHistory();
       }
@@ -1465,7 +1485,19 @@ export class Editor {
     }
     // 分组（外框 / 概括）编辑由 onDown 的手动双击检测处理（原生 dblclick 会因重渲染丢事件）
     const hitEl = e.target.closest && e.target.closest("[data-id]");
-    if (!hitEl) {
+    let hitId = hitEl ? hitEl.getAttribute("data-id") : null;
+    if (!hitId) {
+      // 文字 / 透明背景节点无背景矩形，SVG 命中只认字形——双击节点空白区按包围盒兜底（三模式通用），
+      // 避免双击命中失败后走到空白分支（脑图会误建子节点、编辑框开在别处）
+      const w = this.toWorld(e.clientX, e.clientY);
+      for (let i = this.doc.nodes.length - 1; i >= 0; i--) {
+        const nd = this.doc.nodes[i];
+        if (nd.shape === "arrow" || nd.shape === "line" || nd.shape === "embed") continue;
+        const bb = this.nodeBBox(nd);
+        if (w.x >= bb.x && w.x <= bb.x + bb.w && w.y >= bb.y && w.y <= bb.y + bb.h) { hitId = nd.id; break; }
+      }
+    }
+    if (!hitId) {
       // 设置：双击空白处创建子节点（脑图，挂在中心主题下）
       if (this.mode === "mindmap" && this.dblClickCreate) {
         const root = this.doc.nodes.find((n) => n.parentId == null);
@@ -1473,7 +1505,7 @@ export class Editor {
       }
       return;
     }
-    const n = this.nodeById(hitEl.getAttribute("data-id"));
+    const n = this.nodeById(hitId);
     if (!n) return;
     if (n.shape === "embed") {
       const url = prompt("输入要嵌入的网页地址", n.url || "https://");
