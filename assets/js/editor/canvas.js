@@ -1001,10 +1001,40 @@ export class Editor {
     if (minX === Infinity) return "";
     const pad = 14;
     const col = sel ? "#11b5a4" : (g.stroke || "#aab3bf");
-    const x = minX - pad, y = minY - pad, w = maxX - minX + pad * 2, h = maxY - minY + pad * 2;
-    const title = g.text ? `<text x="${x.toFixed(1)}" y="${(y - 8).toFixed(1)}" font-size="14" font-weight="600" fill="${col}" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(g.text)}</text>` : "";
+    const box = { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
+    const title = g.text ? String(g.text) : "";
+    // 标题自动避让：优先用框顶预留带（框向上扩 TH，标题落在带内左上），被节点占用时在带内向右平移；
+    // 整条带都被占则改用框底预留带；两处都占才回落到框顶——无论如何都不会压住框内成员节点
+    let r = box, labelX = box.x + 10, labelY = 0;
+    if (title) {
+      const tw = Math.min(320, this._labelWidth(title) + 6);
+      const TH = 24;
+      const obstacles = this._obstacles(new Set(members.map((m) => m.id)), 4);
+      const topR = { x: box.x, y: box.y - TH, w: box.w, h: box.h + TH };
+      const botR = { x: box.x, y: box.y, w: Math.max(box.w, 10 + tw + 18), h: box.h + TH };
+      const topBandY = box.y - TH + 3;
+      const botBandY = box.y + box.h + 3;
+      // 在带内沿水平方向找空位（步进 16px）
+      const scan = (bandY, limitX) => {
+        for (let startX = box.x + 10; startX + tw <= limitX; startX += 16) {
+          if (!this._rectHitAny({ x: startX, y: bandY, w: tw, h: 18 }, obstacles)) return startX;
+        }
+        return null;
+      };
+      const topX = scan(topBandY, Math.max(box.x + box.w - 8, box.x + 10 + tw));
+      const botX = scan(botBandY, Math.max(botR.x + botR.w - 8, box.x + 10 + tw));
+      if (topX !== null) { r = topR; labelX = topX; labelY = topBandY + 14; }
+      else if (botX !== null) { r = botR; labelX = botX; labelY = botBandY + 14; }
+      else { r = topR; labelX = box.x + 10; labelY = topBandY + 14; }
+      // 标题比框宽时把框向右扩，避免标题溢出框外
+      const needW = labelX + tw + 8;
+      if (r.x + r.w < needW) r.w = needW - r.x;
+    }
+    const titleEl = title
+      ? `<text x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" font-size="14" font-weight="600" fill="${col}" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(title)}</text>`
+      : "";
     return `<g class="gm-group gm-frame" data-g="${g.id}">` +
-      `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="12" fill="${col}14" stroke="${col}" stroke-width="${sel ? 2.5 : 1.8}" stroke-dasharray="7 5"/>` + title + `</g>`;
+      `<rect x="${r.x.toFixed(1)}" y="${r.y.toFixed(1)}" width="${r.w.toFixed(1)}" height="${r.h.toFixed(1)}" rx="12" fill="${col}14" stroke="${col}" stroke-width="${sel ? 2.5 : 1.8}" stroke-dasharray="7 5"/>` + titleEl + `</g>`;
   }
   // 概括：一组成员右侧的大括号 + 标签（g.text，默认「概要」）；sel 选中高亮
   summaryHTML(members, g, sel) {
@@ -1016,15 +1046,25 @@ export class Editor {
     }
     if (minX === Infinity) return "";
     const col = sel ? "#11b5a4" : (g.stroke || "#f5a623");
-    const x = maxX + 10, y0 = minY, y1 = maxY, ym = (y0 + y1) / 2;
+    const obstacles = this._obstacles(new Set(members.map((m) => m.id)), 4);
+    const y0 = minY, y1 = maxY, ym = (y0 + y1) / 2;
+    // 大括号默认贴成员右侧 10px；右侧紧邻别的节点时整体外移，避免线压节点
+    let x = maxX + 10;
+    if (this._rectHitAny({ x, y: y0, w: 24, h: Math.max(8, y1 - y0) }, obstacles)) x = maxX + 28;
     const k = Math.min(9, Math.max(5, (y1 - y0) * 0.25));
     const d = `M ${x.toFixed(1)},${y0.toFixed(1)} Q ${(x + 9).toFixed(1)},${y0.toFixed(1)} ${(x + 9).toFixed(1)},${(y0 + k).toFixed(1)} L ${(x + 9).toFixed(1)},${(ym - k).toFixed(1)} Q ${(x + 9).toFixed(1)},${ym.toFixed(1)} ${(x + 16).toFixed(1)},${ym.toFixed(1)} Q ${(x + 9).toFixed(1)},${ym.toFixed(1)} ${(x + 9).toFixed(1)},${(ym + k).toFixed(1)} L ${(x + 9).toFixed(1)},${(y1 - k).toFixed(1)} Q ${(x + 9).toFixed(1)},${y1.toFixed(1)} ${x.toFixed(1)},${y1.toFixed(1)}`;
     const label = g.text || "概要";
-    const lw = Math.max(36, label.length * 14 + 18);
+    const lw = Math.max(36, this._labelWidth(label) + 16);
+    // 标签跟着括号走；若与其它节点重叠则继续向右平移找空位（最多 220px）
+    let lx = x + 24;
+    for (let i = 0; i < 10; i++) {
+      if (!this._rectHitAny({ x: lx, y: ym - 15, w: lw, h: 30 }, obstacles)) break;
+      lx += 22;
+    }
     return `<g class="gm-group gm-summary" data-g="${g.id}">` +
       `<path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linecap="round"/>` +
-      `<rect x="${(x + 24).toFixed(1)}" y="${(ym - 15).toFixed(1)}" width="${lw}" height="30" rx="8" fill="#fff" stroke="${col}" stroke-width="1.5"/>` +
-      `<text x="${(x + 24 + lw / 2).toFixed(1)}" y="${(ym + 5).toFixed(1)}" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2a37" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(label)}</text>` +
+      `<rect x="${lx.toFixed(1)}" y="${(ym - 15).toFixed(1)}" width="${lw}" height="30" rx="8" fill="#fff" stroke="${col}" stroke-width="1.5"/>` +
+      `<text x="${(lx + lw / 2).toFixed(1)}" y="${(ym + 5).toFixed(1)}" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2a37" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(label)}</text>` +
       `</g>`;
   }
 
@@ -1115,6 +1155,35 @@ export class Editor {
     this.render();
   }
   // 节点包围盒（箭头 / 直线的 w、h 是增量，可能为负）
+  // 障碍矩形集合（用于外框标题 / 概括标签 / 新节点的避让检测）：默认取所有节点包围盒并外扩 pad
+  _obstacles(excludeIds = null, pad = 6) {
+    const out = [];
+    for (const n of this.doc.nodes) {
+      if (excludeIds && excludeIds.has(n.id)) continue;
+      const b = this.nodeBBox(n);
+      out.push({ x: b.x - pad, y: b.y - pad, w: b.w + pad * 2, h: b.h + pad * 2 });
+    }
+    return out;
+  }
+  _rectHitAny(r, list) {
+    for (const o of list) {
+      if (r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y) return true;
+    }
+    return false;
+  }
+  // 给待放置节点找空位：从 (x,y) 向下逐格试探，其次向上；保证不与已有节点重叠（留 10px 呼吸间距）
+  _freeSpotFor(x, y, w, h, excludeIds = null, maxTry = 160) {
+    const obst = this._obstacles(excludeIds, 10);
+    const hit = (px, py) => this._rectHitAny({ x: px, y: py, w, h }, obst);
+    if (!hit(x, y)) return { x, y };
+    const STEP = 8;
+    for (let i = 1; i <= maxTry; i++) {
+      if (!hit(x, y + i * STEP)) return { x, y: y + i * STEP };
+      if (i <= 30 && !hit(x, y - i * STEP)) return { x, y: y - i * STEP };
+    }
+    return { x, y };
+  }
+
   nodeBBox(n) {
     const s = this.sizes.get(n.id) || sizeOf(n, this.doc.type);
     if (n.shape === "arrow" || n.shape === "line") {
@@ -1936,6 +2005,10 @@ export class Editor {
       y = parent.y;
     }
     const node = { id, x, y, w: 124, h: 44, text: "新节点", shape: "rounded", color: "#fff", textColor: "#1f2a37", stroke: parent.stroke || "#11b5a4", fontSize: 15, parentId, collapsed: false };
+    // 位置自适应：与已有节点重叠时向下（其次向上）寻找空位，保证新节点不遮挡任何节点
+    const ns0 = sizeOf(node, "mindmap");
+    const spot = this._freeSpotFor(x, y, ns0.w, ns0.h);
+    node.x = spot.x; node.y = spot.y;
     this.doc.nodes.push(node);
     // 外框 / 概括：往被框住的节点里加子节点时，新节点自动纳入分组范围（范围随内容自动扩展）
     if (this.doc.groups && this.doc.groups.length) {
@@ -1966,6 +2039,14 @@ export class Editor {
     const below = new Set();
     for (const s of siblings.slice(at + 1)) { below.add(s.id); this.descendants(s.id, below); }
     if (below.size) for (const n of this.doc.nodes) if (below.has(n.id)) n.y += shift;
+    // 位置自适应：仍与其它节点重叠时再找空位（不搬动已有节点）
+    const nsNew = sizeOf(newNode, "mindmap");
+    const spot = this._freeSpotFor(newNode.x, newNode.y, nsNew.w, nsNew.h, new Set([id]));
+    newNode.x = spot.x; newNode.y = spot.y;
+    // 外框 / 概括：当前节点在分组内时，同级新节点同样纳入，范围实时自适应
+    if (this.doc.groups && this.doc.groups.length) {
+      for (const g of this.doc.groups) if (Array.isArray(g.ids) && g.ids.includes(nodeId)) g.ids.push(id);
+    }
     this.selection = new Set([id]);
     this.render(); this.onChange();
     this.pushHistory();
