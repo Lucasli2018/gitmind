@@ -173,6 +173,7 @@ function setLayout(layout) {
 // ---------- 右侧浮动面板（主题 / 结构，参考 XMind；同一时间只开一个） ----------
 const STRUCTS = [
   { k: "mindmap", label: "思维导图", desc: "经典双侧平衡" },
+  { k: "elbow", label: "直角导图", desc: "经典布局 · 直角折线连线" },
   { k: "logicRight", label: "向右逻辑图", desc: "层级向右展开" },
   { k: "logicLeft", label: "向左逻辑图", desc: "层级向左展开" },
   { k: "structure", label: "组织结构图", desc: "自上而下分层" },
@@ -187,6 +188,10 @@ function structPreviewSVG(kind) {
   if (kind === "mindmap") {
     s = ln("M34,22 C44,22 40,10 52,10") + ln("M34,22 C44,22 40,34 52,34") + ln("M34,22 C24,22 28,10 16,10") + ln("M34,22 C24,22 28,34 16,34") +
       R(16, 6, 20, 8, K) + R(52, 6, 20, 8, K) + R(12, 6, 20, 8, K) + R(36, 16, 28, 12, C);
+  } else if (kind === "elbow") {
+    // 直角折线示意
+    s = ln("M26,22 H36 V9 H46") + ln("M26,22 H36 V33 H46") +
+      R(46, 5, 22, 8, K) + R(46, 29, 22, 8, K) + R(8, 16, 18, 12, C);
   } else if (kind === "logicRight") {
     s = ln("M26,22 C36,22 34,9 46,9") + ln("M26,22 C36,22 34,21 46,21") + ln("M26,22 C36,22 34,33 46,33") +
       R(46, 5, 22, 8, K) + R(46, 17, 22, 8, K) + R(46, 29, 22, 8, K) + R(8, 16, 18, 12, C);
@@ -643,7 +648,7 @@ function buildSideRail() {
   const rail = document.createElement("div");
   rail.className = "gm-side-rail";
   const items = [
-    { act: "attr", label: "属性", icon: "sliders" },
+    { act: "attr", label: "节点样式", icon: "sliders" },
     { act: "theme", label: "主题", icon: "theme" },
     { act: "structure", label: "结构", icon: "flow" },
     { act: "outline", label: "大纲", icon: "outline" },
@@ -657,13 +662,12 @@ function buildSideRail() {
     b.addEventListener("click", () => onRailAction(it.act, b));
     rail.appendChild(b);
   }
-  // 插到画布之后、右侧说明栏之前
-  const right = bodyEl.querySelector(".gm-right");
-  bodyEl.insertBefore(rail, right || null);
+  // 贴在画布右侧（右侧说明栏已移除）
+  bodyEl.appendChild(rail);
 }
 function onRailAction(act, btn) {
   if (act === "attr") {
-    // 属性：选中节点并打开样式面板（脑图无选中时默认选中心主题）
+    // 节点样式：选中节点并打开样式面板（脑图无选中时默认选中心主题）
     if (!editor.selection.size) {
       const root = editor.doc.nodes.find((n) => n.parentId == null) || editor.doc.nodes[0];
       if (root) { editor.selection = new Set([root.id]); editor.render(); }
@@ -1661,19 +1665,7 @@ function wireBottomBars() {
   }, 250);
   // 右下角 ? 快捷键弹框
   document.getElementById("helpFab").addEventListener("click", openShortcutsModal);
-  // 右侧说明栏收起（localStorage 记忆）
-  const st = document.getElementById("sideToggle");
-  const applySide = () => {
-    const hidden = localStorage.getItem("gm_side_hidden") === "1";
-    document.body.classList.toggle("gm-side-hidden", hidden);
-    st.textContent = hidden ? "«" : "›";
-    st.title = hidden ? "展开侧栏" : "收起侧栏";
-  };
-  st.addEventListener("click", () => {
-    localStorage.setItem("gm_side_hidden", document.body.classList.contains("gm-side-hidden") ? "0" : "1");
-    applySide();
-  });
-  applySide();
+  // 右侧说明栏已移除，侧栏收起按钮一并下线
 }
 
 function addTool(bar, icon, label, action) {
@@ -1746,12 +1738,7 @@ function wireChrome() {
   document.getElementById("shareBtn").addEventListener("click", toggleShare);
   document.getElementById("undoBtn").addEventListener("click", () => editor.undo());
   document.getElementById("redoBtn").addEventListener("click", () => editor.redo());
-  document.getElementById("zoomIn").addEventListener("click", () => { const r = editor.rect(); editor.zoomAt(1.2, r.left + r.width / 2, r.top + r.height / 2); });
-  document.getElementById("zoomOut").addEventListener("click", () => { const r = editor.rect(); editor.zoomAt(1 / 1.2, r.left + r.width / 2, r.top + r.height / 2); });
-  document.getElementById("zoomFit").addEventListener("click", () => editor.fitView());
-  document.getElementById("layoutBtn").addEventListener("click", () => { layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); });
-  document.getElementById("outlineBtn").addEventListener("click", () => import("./outline.js").then((m) => m.openOutline(editor)));
-  document.getElementById("delBtn").addEventListener("click", () => editor.deleteSelection());
+  // 右侧栏（视图/操作/快捷键面板）已移除：缩放走左下控制条，大纲/删除走右键菜单与快捷键
   // 顶部「思维导图 / 流程图 / 白板」仅作为当前模式指示，不可点击切换（类型在建图时确定）
   // 白板插入图片：本地图片转 dataURL 后放进画布中心
   document.getElementById("wbImageFile").addEventListener("change", (e) => {

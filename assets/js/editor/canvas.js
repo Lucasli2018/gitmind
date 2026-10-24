@@ -79,19 +79,24 @@ export class Editor {
     // 右键按下即阻止默认行为：抑制浏览器/鼠标手势插件把"右键拖拽"解释成后退/前进
     container.addEventListener("mousedown", (e) => { if (e.button === 2) e.preventDefault(); });
     // 右键双击检测（window 捕获层）：第二次右键可能落在右键菜单上（pointerdown 到不了 svg），
-    // 因此挂 window 并把「右键菜单上的右键」也视作画布右键。双击 -> 切换抓手工具（替代旧长按右键拖拽平移）
+    // 因此挂 window 并把「右键菜单上的右键」也视作画布右键。双击（350ms 内且位置接近）-> 切换抓手工具
     window.addEventListener("pointerdown", (e) => {
       if (e.button !== 2) return;
       const t = e.target;
       const inCanvas = this.container.contains(t) || (t.closest && t.closest(".gm-ctx-menu"));
       if (!inCanvas) return;
       const now = Date.now();
-      if (now - this._rmbLastDown < 350) {
+      const near = this._rmbLastXY && Math.hypot(e.clientX - this._rmbLastXY.x, e.clientY - this._rmbLastXY.y) < 15;
+      if (now - this._rmbLastDown < 350 && near) {
         this._rmbLastDown = 0;
+        this._rmbLastXY = null;
         this._rmbDblAt = now;
         this.setTool(this.tool === "hand" ? "select" : "hand");
         document.querySelectorAll(".gm-ctx-menu").forEach((m) => m.remove()); // 双击生效，顺手收起菜单
-      } else this._rmbLastDown = now;
+      } else {
+        this._rmbLastDown = now;
+        this._rmbLastXY = { x: e.clientX, y: e.clientY };
+      }
     }, true);
     window.addEventListener("pointermove", (e) => this.onMove(e));
     window.addEventListener("pointerup", (e) => this.onUp(e));
@@ -656,10 +661,11 @@ export class Editor {
     } else if (this.doc.type === "mindmap") {
       // 脑图父子连线（side 决定接出方向，端点由 _edgeEnds 给出）
       const side = b.side || "right";
-      const isList = this.doc.layout === "list";
-      if (side === "down" || isList) {
+      // list 目录组织 / elbow 直角导图：直角折线连线
+      const isElbow = this.doc.layout === "list" || this.doc.layout === "elbow";
+      if (side === "down" || isElbow) {
         const my = (ay + by) / 2;
-        d = isList
+        d = isElbow
           ? `M ${ax},${ay} H ${(ax + bx) / 2} V ${by} H ${bx}`
           : `M ${ax},${ay} C ${ax},${my} ${bx},${my} ${bx},${by}`;
       } else {
