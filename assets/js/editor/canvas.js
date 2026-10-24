@@ -677,10 +677,88 @@ export class Editor {
     return { ax: pa.x, ay: pa.y, bx: pb.x, by: pb.y };
   }
 
-  // 二次贝塞尔中点 B(0.5) = 0.25·P0 + 0.5·C + 0.25·P1
+  // 二次贝塞尔中点（按弧长取真实中点，弯曲较大时也不会偏）
   _quadMid(ax, ay, bx, by, bend) {
-    if (bend && (bend.x || bend.y)) return { x: 0.25 * ax + 0.5 * bend.x + 0.25 * bx, y: 0.25 * ay + 0.5 * bend.y + 0.25 * by };
-    return { x: (ax + bx) / 2, y: (ay + by) / 2 };
+    if (!bend || (!bend.x && !bend.y)) return { x: (ax + bx) / 2, y: (ay + by) / 2 };
+    const N = 32, pts = [];
+    for (let i = 0; i <= N; i++) {
+      const t = i / N, mt = 1 - t;
+      pts.push([mt * mt * ax + 2 * mt * t * bend.x + t * t * bx, mt * mt * ay + 2 * mt * t * bend.y + t * t * by]);
+    }
+    return this._polylineMid(pts);
+  }
+  // 三次贝塞尔中点（按弧长取真实中点：拉杆把曲线拉弯后，参数中点≠视觉中点）
+  _cubicMid(ax, ay, c1, c2, bx, by) {
+    const N = 40, pts = [];
+    for (let i = 0; i <= N; i++) {
+      const t = i / N, mt = 1 - t;
+      const a = mt * mt * mt, b = 3 * mt * mt * t, c = 3 * mt * t * t, d = t * t * t;
+      pts.push([a * ax + b * c1.x + c * c2.x + d * bx, a * ay + b * c1.y + c * c2.y + d * by]);
+    }
+    return this._polylineMid(pts);
+  }
+  // 折线总长度一半处的中点
+  _polylineMid(pts) {
+    let total = 0;
+    const segs = [];
+    for (let i = 1; i < pts.length; i++) {
+      const len = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      segs.push(len); total += len;
+    }
+    let half = total / 2;
+    for (let i = 0; i < segs.length; i++) {
+      if (half <= segs[i] || i === segs.length - 1) {
+        const r = segs[i] ? half / segs[i] : 0;
+        return { x: pts[i][0] + (pts[i + 1][0] - pts[i][0]) * r, y: pts[i][1] + (pts[i + 1][1] - pts[i][1]) * r };
+      }
+      half -= segs[i];
+    }
+    return { x: pts[0][0], y: pts[0][1] };
+  }
+
+  // 连线文字标签宽度（按中英文混排估算，保证文字完整落在框内）
+  _labelWidth(text) {
+    let w = 0;
+    for (const ch of String(text || "")) w += /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/.test(ch) ? 12 : 7;
+    return Math.max(28, Math.min(280, w + 16));
+  }
+
+  // 连线实际绘制路径的中点（文字标签 / 中点柄用）：必须和 edgeHTML 里画出来的曲线一致
+  _edgePathMid(e, ends) {
+    const { ax, ay, bx, by } = ends;
+    // 先判定「这条线实际怎么画」：拉杆 / 弯曲 / 关联线弧形 / 脑图父子线 / 普通线
+    if (e.aLev || e.bLev) {
+      const { c1, c2 } = this._edgeCtrl(e, ends);
+      return this._cubicMid(ax, ay, c1, c2, bx, by);
+    }
+    if (e.bend && (e.bend.x || e.bend.y)) return this._quadMid(ax, ay, bx, by, e.bend);
+    if (e.assoc) {
+      const q = this._assocCtrl(ax, ay, bx, by);
+      return { x: 0.25 * ax + 0.5 * q.x + 0.25 * bx, y: 0.25 * ay + 0.5 * q.y + 0.25 * by };
+    }
+    if (this.doc.type === "mindmap" && e.derived) {
+      const a = this.nodeById(e.from), b = this.nodeById(e.to);
+      const sa = this.sizes.get(a.id), sb = this.sizes.get(b.id);
+      const side = (sa && sb) ? this._mmSide(a, sa, b, sb) : "right";
+      const isElbow = this.doc.layout === "list" || this.doc.layout === "elbow";
+      if (isElbow) {
+        const G = 20;
+        let pts;
+        if (side === "down") pts = [[ax, ay], [ax, ay + G], [bx, ay + G], [bx, by]];
+        else if (side === "up") pts = [[ax, ay], [ax, ay - G], [bx, ay - G], [bx, by]];
+        else if (side === "left") pts = [[ax, ay], [ax - G, ay], [ax - G, by], [bx, by]];
+        else pts = [[ax, ay], [ax + G, ay], [ax + G, by], [bx, by]];
+        return this._polylineMid(pts);
+      }
+      if (side === "down" || side === "up") {
+        const my = (ay + by) / 2;
+        return this._cubicMid(ax, ay, { x: ax, y: my }, { x: bx, y: my }, bx, by);
+      }
+      const dx = bx - ax;
+      return this._cubicMid(ax, ay, { x: ax + dx * 0.5, y: ay }, { x: bx - dx * 0.5, y: by }, bx, by);
+    }
+    const { c1, c2 } = this._edgeCtrl(e, ends);
+    return this._cubicMid(ax, ay, c1, c2, bx, by);
   }
 
   // 选中集中的唯一连线 id（选择集里以 "e:" 前缀标识连线），无则 null
@@ -723,9 +801,11 @@ export class Editor {
         const q = this._assocCtrl(ax, ay, bx, by);
         d = `M ${ax.toFixed(1)},${ay.toFixed(1)} Q ${q.x.toFixed(1)},${q.y.toFixed(1)} ${bx.toFixed(1)},${by.toFixed(1)}`;
       }
-      const mid = this._quadMid(ax, ay, bx, by, e.bend);
+      // 文字标签固定在曲线中点（随端点和弧度实时居中）
+      const mid = this._edgePathMid(e, ends);
+      const lw = this._labelWidth(e.label);
       const lbl = e.label
-        ? `<rect x="${mid.x - 14}" y="${mid.y - 11}" width="28" height="20" rx="5" fill="#fff" stroke="${sel ? "#11b5a4" : "#ffe0c2"}"/><text x="${mid.x}" y="${mid.y + 4}" text-anchor="middle" font-size="12" fill="#d97706">${escapeXml(e.label)}</text>`
+        ? `<rect x="${(mid.x - lw / 2).toFixed(1)}" y="${(mid.y - 10).toFixed(1)}" width="${lw.toFixed(1)}" height="20" rx="5" fill="#fff" stroke="${sel ? "#11b5a4" : "#ffe0c2"}"/><text x="${mid.x.toFixed(1)}" y="${(mid.y + 4).toFixed(1)}" text-anchor="middle" font-size="12" fill="#d97706">${escapeXml(e.label)}</text>`
         : "";
       return hitPath(d) + `<path d="${d}" fill="none" stroke="${stroke}" ${`stroke-width="${sw}"`}${dash} stroke-linecap="round"${mkStart}${mkEnd}${dataEdge}/>${lbl}`;
     }
@@ -767,8 +847,10 @@ export class Editor {
     const marker = `${mkStart}${mkEnd}`;
     let label = "";
     if (e.label) {
-      const mid = this._quadMid(ax, ay, bx, by, e.bend);
-      label = `<rect x="${mid.x - 14}" y="${mid.y - 11}" width="28" height="20" rx="5" fill="#fff" stroke="${sel ? "#11b5a4" : "#e2e8f0"}"/><text x="${mid.x}" y="${mid.y + 4}" text-anchor="middle" font-size="12" fill="#64748b">${escapeXml(e.label)}</text>`;
+      // 文字标签固定在曲线中点（随端点 / 弧度 / 布局实时居中）
+      const mid = this._edgePathMid(e, ends);
+      const lw = this._labelWidth(e.label);
+      label = `<rect x="${(mid.x - lw / 2).toFixed(1)}" y="${(mid.y - 10).toFixed(1)}" width="${lw.toFixed(1)}" height="20" rx="5" fill="#fff" stroke="${sel ? "#11b5a4" : "#e2e8f0"}"/><text x="${mid.x.toFixed(1)}" y="${(mid.y + 4).toFixed(1)}" text-anchor="middle" font-size="12" fill="#64748b">${escapeXml(e.label)}</text>`;
     }
     return hitPath(d) + `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${sw}"${dash}${marker}${dataEdge}/>${label}`;
   }
@@ -803,9 +885,7 @@ export class Editor {
       LEV(c1.x, c1.y, "levA", TIP_L0) + LEV(c2.x, c2.y, "levB", TIP_L1);
     // 关联线额外保留原来的 3 个位置调节点：起点 / 中点（弯曲）/ 终点
     if (e.assoc) {
-      const mc = e.bend && (e.bend.x || e.bend.y)
-        ? this._quadMid(ax, ay, bx, by, e.bend)
-        : { x: 0.125 * ax + 0.375 * c1.x + 0.375 * c2.x + 0.125 * bx, y: 0.125 * ay + 0.375 * c1.y + 0.375 * c2.y + 0.125 * by };
+      const mc = this._edgePathMid(e, ends);
       out += POS(ax, ay, "p0", "起点：拖动可移动 / 吸附到其它节点，拖到空白处固定")
         + POS(mc.x, mc.y, "mid", "中点：拖动调节弯曲")
         + POS(bx, by, "p1", "终点：拖动可移动 / 吸附到其它节点，拖到空白处固定");
