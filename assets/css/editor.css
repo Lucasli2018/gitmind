@@ -569,3 +569,13 @@ body.gm-zen .gm-right { display: none !important; }
 .gm-minimap .gm-mm-open:hover { color: #0b7d73; border-color: #b9c6d2; }
 .gm-minimap.collapsed .gm-mm-view { display: none; }
 .gm-minimap.collapsed .gm-mm-open { display: block; }
+
+/* ---------- 连线端点调节柄（所有类型统一：端点外侧小圆柄 + 引导线） ---------- */
+.gm-edge-handle { cursor: grab; transition: r .12s, fill .12s; }
+.gm-edge-handle:hover { fill: #e6fbf8; stroke-width: 2.4; }
+.gm-edge-handle:active { cursor: grabbing; }
+.gm-edge-lead { pointer-events: none; }
+.gm-edge-handle-hit { cursor: grab; }
+.gm-edge-handle-hit:active { cursor: grabbing; }
+.gm-edge-handle-hit { cursor: grab; }
+.gm-edge-handle-hit:active { cursor: grabbing; }
