@@ -5,6 +5,16 @@ import { layoutMindmap } from "./mindmap.js";
 const SVGNS = "http://www.w3.org/2000/svg";
 const PALETTE = ["#11b5a4", "#2f80ed", "#ff7a59", "#f5a623", "#9b59b6", "#16a34a", "#e5484d", "#0ea5e9"];
 
+// 流程图形状工具名（点击画布处创建组件，用完自动回到选择工具）
+const FC_SHAPE_TOOLS = ["rect", "rounded", "diamond", "ellipse", "parallelogram", "text"];
+
+// 画笔 / 文字 / 橡皮的自定义光标（与工具栏图标同款，data-URI SVG，热点随工具）
+const TOOL_CURSORS = {
+  pen: `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M4.5 19.5l1-4L16 5l3 3L8.5 18.5l-4 1z" fill="#fff" stroke="#1f2a37" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 7l3 3" stroke="#1f2a37" stroke-width="1.4"/></svg>`)}") 4 20, crosshair`,
+  text: `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M8 4h8M12 4v16M8 20h8" stroke="#1f2a37" stroke-width="1.8" stroke-linecap="round"/></svg>`)}") 12 12, text`,
+  eraser: `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g transform="rotate(-45 12 12)"><rect x="4" y="9" width="16" height="7" rx="2" fill="#fff" stroke="#1f2a37" stroke-width="1.6"/><path d="M9 9v7" stroke="#1f2a37" stroke-width="1.2"/></g></svg>`)}") 4 18, crosshair`,
+};
+
 export class Editor {
   constructor(container, opts = {}) {
     this.container = container;
@@ -230,7 +240,7 @@ export class Editor {
     if (this.doc.type === "mindmap") {
       edges = [];
       for (const n of this.doc.nodes) {
-        if (n.parentId && this.nodeById(n.parentId)) edges.push({ id: "p-" + n.id, from: n.parentId, to: n.id, derived: true, label: n.edgeLabel || null });
+        if (n.parentId && this.nodeById(n.parentId)) edges.push({ id: "p-" + n.id, from: n.parentId, to: n.id, derived: true, label: n.edgeLabel || null, bend: n.edgeBend || null });
       }
       // 关联线（工具栏创建的任意两节点连线）附加在父子连线之上
       edges = edges.concat(this.doc.edges.filter((e) => e.assoc));
@@ -545,10 +555,10 @@ export class Editor {
       if (side === "down") return { ax: a.x + sa.w / 2, ay: a.y + sa.h, bx: b.x + sb.w / 2, by: b.y };
       return { ax: a.x + sa.w, ay: a.y + sa.h / 2, bx: b.x, by: b.y + sb.h / 2 };
     }
-    // 流程图：四向端口
+    // 流程图：四向端口（头尾端点被手动拖拽固定过则优先使用固定端点）
     const acx = a.x + sa.w / 2, acy = a.y + sa.h / 2, bcx = b.x + sb.w / 2, bcy = b.y + sb.h / 2;
-    let pa = e.fromPort ? this._portPoint(a, sa, e.fromPort) : null;
-    let pb = e.toPort ? this._portPoint(b, sb, e.toPort) : null;
+    let pa = e.aPt || (e.fromPort ? this._portPoint(a, sa, e.fromPort) : null);
+    let pb = e.bPt || (e.toPort ? this._portPoint(b, sb, e.toPort) : null);
     if (!pa && !pb) {
       // 自动选向：左右差大走横向端口，上下差大走纵向端口
       const dx = bcx - acx, dy = bcy - acy;
@@ -587,14 +597,18 @@ export class Editor {
     if (!sa || !sb) return "";
     const selKey = "e:" + e.id;
     const sel = this.selection.has(selKey);
-    const dataEdge = e.derived ? "" : ` data-edge="${e.id}"`;
-    const hitPath = (d) => e.derived ? "" : `<path class="gm-edge" d="${d}" fill="none" stroke="transparent" stroke-width="14" pointer-events="stroke"${dataEdge}/>`;
+    const dataEdge = ` data-edge="${e.id}"`;
+    const hitPath = (d) => `<path class="gm-edge" d="${d}" fill="none" stroke="transparent" stroke-width="14" pointer-events="stroke"${dataEdge}/>`;
     // 连线样式（选中高亮）：颜色 / 宽度 / 线型，均可按连线覆盖
     const stroke = sel ? "#11b5a4" : (e.stroke || (e.derived ? (b.stroke || "#11b5a4") : e.assoc ? "#ff9f43" : "#94a3b8"));
     const sw = e.strokeWidth || 2;
     const style = e.strokeStyle || (e.assoc || e.derived ? (e.assoc ? "dashed" : "solid") : "solid");
     const dash = style === "dashed" ? ` stroke-dasharray="${(7 + sw * 2).toFixed(1)} ${(5 + sw * 2).toFixed(1)}"`
       : style === "dotted" ? ` stroke-dasharray="${Math.max(0.1, sw * 0.5).toFixed(2)} ${(sw * 2.2).toFixed(1)}" stroke-linecap="round"` : "";
+    // 箭头模式：none 无 / end 右(尾) / start 左(头) / both 双向；默认：流程线带尾箭头，其余无
+    const am = e.arrowMode || (e.arrow === false ? "none" : (e.assoc || e.derived ? "none" : "end"));
+    const mkEnd = am === "end" || am === "both" ? ` marker-end="url(#gm-arrow)"` : "";
+    const mkStart = am === "start" || am === "both" ? ` marker-start="url(#gm-arrow)"` : "";
     // 关联线：任意两节点间的曲线（端点自动吸附到两侧节点边框），拖中点可调节弯曲
     if (e.assoc) {
       const { ax, ay, bx, by } = this._edgeEnds(e);
@@ -610,7 +624,7 @@ export class Editor {
       const lbl = e.label
         ? `<rect x="${mid.x - 14}" y="${mid.y - 11}" width="28" height="20" rx="5" fill="#fff" stroke="${sel ? "#11b5a4" : "#ffe0c2"}"/><text x="${mid.x}" y="${mid.y + 4}" text-anchor="middle" font-size="12" fill="#d97706">${escapeXml(e.label)}</text>`
         : "";
-      return hitPath(d) + `<path d="${d}" fill="none" stroke="${stroke}" ${`stroke-width="${sw}"`}${dash} stroke-linecap="round"${dataEdge}/>${lbl}`;
+      return hitPath(d) + `<path d="${d}" fill="none" stroke="${stroke}" ${`stroke-width="${sw}"`}${dash} stroke-linecap="round"${mkStart}${mkEnd}${dataEdge}/>${lbl}`;
     }
     let d;
     const { ax, ay, bx, by } = this._edgeEnds(e);
@@ -640,7 +654,7 @@ export class Editor {
         d = `M ${ax},${ay} C ${ax},${my} ${bx},${my} ${bx},${by}`;
       }
     }
-    const marker = this.doc.type === "mindmap" ? "" : ` marker-end="url(#gm-arrow)"`;
+    const marker = this.doc.type === "mindmap" ? "" : `${mkStart}${mkEnd}`;
     let label = "";
     if (e.label) {
       const mid = this._quadMid(ax, ay, bx, by, e.bend);
@@ -649,18 +663,25 @@ export class Editor {
     return hitPath(d) + `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${sw}"${dash}${marker}/>${label}`;
   }
 
-  // 选中连线的调节点：关联线 = 头/中/尾 3 个（头尾可拖拽改端点），其余连线只有中点（拖动调节弯曲）
+  // 选中连线的调节点：关联线 / 流程图连线 = 头/中/尾 3 个（头尾可拖拽改端点）；
+  // 脑图父子线（派生线，bend 存于子节点 edgeBend）与普通连线只有中点（拖动调节弯曲）
   edgeHandleHTML() {
     const eid = this._selEdgeId();
     if (!eid) return "";
-    const e = this.edgeById(eid);
+    let e = this.edgeById(eid);
+    let derivedChild = null;
+    if (!e && eid.startsWith("p-")) {
+      derivedChild = this.nodeById(eid.slice(2));
+      if (derivedChild && derivedChild.parentId && this.nodeById(derivedChild.parentId))
+        e = { id: eid, from: derivedChild.parentId, to: derivedChild.id, derived: true, bend: derivedChild.edgeBend || null };
+    }
     if (!e) return "";
     const a = this.nodeById(e.from), b = this.nodeById(e.to);
     if (!a || !b) return "";
     const { ax, ay, bx, by } = this._edgeEnds(e);
     const mid = this._quadMid(ax, ay, bx, by, e.bend);
     const H = (hx, hy, kind, title) => `<circle class="gm-edge-handle" data-edge="${eid}" data-h="${kind}" title="${title}" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="6" fill="#fff" stroke="#11b5a4" stroke-width="2"/>`;
-    if (e.assoc) return H(ax, ay, "p0", "起点：拖到其他节点重新吸附，或拖到空白处固定") + H(mid.x, mid.y, "mid", "中点：调节弯曲") + H(bx, by, "p1", "终点：拖到其他节点重新吸附，或拖到空白处固定");
+    if (e.assoc || this.doc.type === "flowchart") return H(ax, ay, "p0", "起点：拖到其他节点重新吸附，或拖到空白处固定") + H(mid.x, mid.y, "mid", "中点：调节弯曲") + H(bx, by, "p1", "终点：拖到其他节点重新吸附，或拖到空白处固定");
     return H(mid.x, mid.y, "mid", "中点：调节弯曲");
   }
 
@@ -687,6 +708,25 @@ export class Editor {
     const e = this.edgeById(id); if (!e) return;
     for (const k of Object.keys(patch)) { if (patch[k] === null) delete e[k]; else e[k] = patch[k]; }
     if (patch.bend === "straight") { const { ax, ay, bx, by } = this._edgeEnds(e); e.bend = { x: (ax + bx) / 2, y: (ay + by) / 2 }; }
+    this.render(); this.onChange(); this.pushHistory();
+  }
+
+  // 脑图父子连线（派生线）弯曲调节：bend 存于子节点 edgeBend（重渲染不丢）。
+  // mode: "curve" 恢复默认曲线 / "straight" 拉直（bend 取两端中点）
+  setDerivedEdgeBend(childId, mode) {
+    const n = this.nodeById(childId); if (!n || !n.parentId) return;
+    const p = this.nodeById(n.parentId); if (!p) return;
+    if (mode === "curve") { delete n.edgeBend; }
+    else {
+      const sa = this.sizes.get(p.id) || sizeOf(p, this.doc.type);
+      const sb = this.sizes.get(n.id) || sizeOf(n, this.doc.type);
+      const side = n.side || "right";
+      let ax, ay, bx, by;
+      if (side === "left") { ax = p.x; ay = p.y + sa.h / 2; bx = n.x + sb.w; by = n.y + sb.h / 2; }
+      else if (side === "down") { ax = p.x + sa.w / 2; ay = p.y + sa.h; bx = n.x + sb.w / 2; by = n.y; }
+      else { ax = p.x + sa.w; ay = p.y + sa.h / 2; bx = n.x; by = n.y + sb.h / 2; }
+      n.edgeBend = { x: (ax + bx) / 2, y: (ay + by) / 2 };
+    }
     this.render(); this.onChange(); this.pushHistory();
   }
 
@@ -880,11 +920,14 @@ export class Editor {
       this._pan = { sx: e.clientX - r0.left, sy: e.clientY - r0.top, ox: this.view.x, oy: this.view.y };
       return;
     }
-    // 右键：长按拖拽平移画布（未拖动则由 contextmenu 弹出右键菜单）
+    // 右键：长按拖拽平移画布（未拖动则由 contextmenu 弹出右键菜单），拖动中光标显示为手
     if (e.button === 2) {
       e.preventDefault();
       const r0 = this.rect();
       this._rmb = { sx: e.clientX - r0.left, sy: e.clientY - r0.top, ox: this.view.x, oy: this.view.y, moved: false };
+      this._rmbCursor = this.container.style.cursor;
+      this.container.style.cursor = "grabbing";
+      this.svg.classList.add("panning");
       return;
     }
     if (e.button !== 0) return;
@@ -1019,14 +1062,22 @@ export class Editor {
       }
     }
 
+    // ---------- 流程图：形状工具激活时，点击处创建组件（先选工具再点画布，不自动落点） ----------
+    if (this.mode === "flowchart" && FC_SHAPE_TOOLS.includes(this.tool)) {
+      const w = this.toWorld(e.clientX, e.clientY);
+      this.addFlowShape(this.tool, w.x, w.y);
+      this.setTool("select");
+      return;
+    }
+
     const portEl = target.closest && target.closest(".gm-port");
     const hitEl = target.closest && target.closest("[data-id]");
     let id = hitEl ? hitEl.getAttribute("data-id") : null;
 
-    // 连线：选中（Shift 叠加多选）；中点手柄已在上方处理；派生（父子）连线不单选，避免无意义样式面板
+    // 连线：选中（Shift 叠加多选）；中点手柄已在上方处理（脑图派生线也可选中调节弯曲）
     const edgeEl = target.closest && target.closest("[data-edge]");
     const edgeIdAttr = edgeEl && edgeEl.getAttribute("data-edge");
-    if (edgeEl && edgeIdAttr && this.tool === "select" && this.mode !== "whiteboard" && !edgeIdAttr.startsWith("p-")) {
+    if (edgeEl && edgeIdAttr && this.tool === "select" && this.mode !== "whiteboard") {
       const key = "e:" + edgeIdAttr;
       if (e.shiftKey) {
         if (this.selection.has(key)) this.selection.delete(key); else this.selection.add(key);
@@ -1108,13 +1159,18 @@ export class Editor {
       return;
     }
     // 连线调节点拖拽：mid 调弯曲（反解二次贝塞尔控制点 C = 2M - (P0+P1)/2）；
-    // p0 / p1 拖头尾端点——吸附到附近节点边框，或落到空白处固定
+    // p0 / p1 拖头尾端点——吸附到附近节点边框，或落到空白处固定。
+    // 脑图派生线（id 以 "p-" 开头）每次渲染都会重建，bend 必须写入子节点 edgeBend 才能持久化
     if (this._edgeDrag) {
-      const ed = this.edgeById(this._edgeDrag.id);
+      const dId = this._edgeDrag.id;
+      const derivedChild = !this.edgeById(dId) && dId.startsWith("p-") ? this.nodeById(dId.slice(2)) : null;
+      const ed = this.edgeById(dId) || (derivedChild ? { id: dId, from: derivedChild.parentId, to: derivedChild.id, derived: true } : null);
       if (ed && this._edgeDrag.kind === "mid") {
         const ends = this._edgeEnds(ed);
         const w = this.toWorld(e.clientX, e.clientY);
-        ed.bend = { x: 2 * w.x - (ends.ax + ends.bx) / 2, y: 2 * w.y - (ends.ay + ends.by) / 2 };
+        const bend = { x: 2 * w.x - (ends.ax + ends.bx) / 2, y: 2 * w.y - (ends.ay + ends.by) / 2 };
+        if (derivedChild) derivedChild.edgeBend = bend; // 存到节点上，重渲染不丢
+        else ed.bend = bend;
         this._edgeDrag.moved = true;
         this.render();
       } else if (ed) {
@@ -1246,8 +1302,15 @@ export class Editor {
   }
 
   onUp(e) {
-    // 右键拖拽平移结束：记录拖动时间戳（供 contextmenu 抑制弹菜单）
-    if (this._rmb) { if (this._rmb.moved) this._rmbDraggedAt = Date.now(); this._rmb = null; return; }
+    // 右键拖拽平移结束：恢复光标；记录拖动时间戳（供 contextmenu 抑制弹菜单）
+    if (this._rmb) {
+      if (this._rmb.moved) this._rmbDraggedAt = Date.now();
+      this._rmb = null;
+      this.svg.classList.remove("panning");
+      this.container.style.cursor = this._rmbCursor || "default";
+      this._rmbCursor = null;
+      return;
+    }
     // 备注徽标：pointerup 时打开备注弹框（任何拖拽分支之前处理）
     if (this._pendingBadge) {
       const id = this._pendingBadge;
@@ -1676,9 +1739,13 @@ export class Editor {
     this.tool = tool;
     this._linkFrom = null; // 切换工具时放弃未完成的关联线
     this._linkHover = null;
+    // 光标策略：形状工具全画布十字星；画笔/文字/橡皮用工具栏同款图标光标
+    const SHAPE_TOOLS = ["frame", "rect", "diamond", "ellipse", "arrow", "line", "rounded", "parallelogram"];
+    this.svg.classList.toggle("cur-cross", SHAPE_TOOLS.includes(tool) || tool === "laser");
+    this.svg.classList.toggle("cur-tool", !!TOOL_CURSORS[tool]);
     if (tool === "select") this.container.style.cursor = "default";
     else if (tool === "hand") this.container.style.cursor = "grab";
-    else if (tool === "laser") this.container.style.cursor = "crosshair";
+    else if (TOOL_CURSORS[tool]) this.container.style.cursor = TOOL_CURSORS[tool];
     else this.container.style.cursor = "crosshair";
     if (tool !== "laser") this._laser = null;
     if (this._onToolChange) this._onToolChange(tool); // 通知工具栏刷新高亮
