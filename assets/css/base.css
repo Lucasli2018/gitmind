@@ -70,8 +70,10 @@ input, textarea, select { font-family: inherit; }
 .nav a.link:hover { color: var(--brand-700); }
 .nav .avatar {
   width: 36px; height: 36px; border-radius: 50%; background: var(--grad);
-  color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;
+  color: #fff; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;
 }
+/* 右侧登录区平铺展示：头像与按钮横向排列 */
+#navAuth { display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; }
 
 /* ---------- 容器 ---------- */
 .container { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
