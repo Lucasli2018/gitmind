@@ -15,4 +15,5 @@ export const FC_TOOLS = [
   { act: "link", label: "关联线", icon: "link", key: "L" },
   { act: "image", label: "图片", icon: "image", key: "7" },
   { act: "delete", label: "删除节点", icon: "trash" },
+  { act: "fit", label: "整理布局", icon: "fit" },
 ];

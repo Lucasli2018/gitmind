@@ -964,10 +964,12 @@ export class Editor {
     const b = this.getBounds();
     const r = this.rect();
     if (!b || !Number.isFinite(b.x + b.y + b.w + b.h) || b.w <= 0 || b.h <= 0) {
-      this.view = { x: r.width * 0.12, y: r.height / 2, scale: 1 }; this.render(); return;
+      // 空画布：视图归位到画布中心（缩放 1），避免内容落到左上角
+      this.view = { x: r.width / 2, y: r.height / 2, scale: 1 }; this.render(); return;
     }
     const pad = 60;
-    const scale = Math.min(1.3, Math.max(0.2, Math.min((r.width - pad) / b.w, (r.height - pad) / b.h)));
+    // 下限放到 0.05：超大画布也能整体缩进屏幕（整理布局要求「大小适配屏幕」）
+    const scale = Math.min(1.3, Math.max(0.05, Math.min((r.width - pad) / b.w, (r.height - pad) / b.h)));
     this.view.scale = scale;
     this.view.x = (r.width - b.w * scale) / 2 - b.x * scale;
     this.view.y = (r.height - b.h * scale) / 2 - b.y * scale;

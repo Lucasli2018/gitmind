@@ -348,6 +348,18 @@ function buildMmBar(bar) {
   }
   refreshFcActive();
 }
+// ---------- 整理布局（三模式通用）：内容居中 + 大小适配屏幕 ----------
+// 脑图额外按层级重排；流程图 / 白板只做居中适配（不改变元素相对位置）
+function fitAll() {
+  if (!editor) return;
+  if (editor.doc.type === "mindmap") layoutMindmap(editor.doc);
+  editor.render();
+  editor.fitView(true);
+  editor.onChange();
+  editor.pushHistory();
+  if (editor.mode === "mindmap") toast("已整理布局并居中显示", "info");
+  else toast("已居中并适配屏幕", "info");
+}
 function onMmAction(act, arg) {
   const selId = [...editor.selection][0];
   const node = selId ? editor.nodeById(selId) : null;
@@ -355,7 +367,7 @@ function onMmAction(act, arg) {
   if (act === "select") { editor.setTool("select"); refreshFcActive(); return; }
   if (act === "hand") { editor.setTool(editor.tool === "hand" ? "select" : "hand"); refreshFcActive(); return; }
   if (act === "delete") { editor.deleteSelection(); return; }
-  if (act === "layout") { layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); editor.pushHistory(); return; }
+  if (act === "layout") { fitAll(); return; }
   if (act === "child") { if (selId) editor.addMindmapChild(selId); else ensureRoot(); return; }
   if (act === "sibling") { if (!needNode()) editor.addMindmapSibling(selId); return; }
   if (act === "image") { if (!needNode()) document.getElementById("wbImageFile").click(); return; }
@@ -753,6 +765,7 @@ function onFcAction(act) {
   if (act === "select") { editor.setTool("select"); refreshFcActive(); return; }
   if (act === "hand") { editor.setTool(editor.tool === "hand" ? "select" : "hand"); refreshFcActive(); return; }
   if (act === "delete") { editor.deleteSelection(); return; }
+  if (act === "fit") { fitAll(); return; }
   if (act === "image") { document.getElementById("wbImageFile").click(); return; }
   if (act === "link") {
     editor.setTool(editor.tool === "link" ? "select" : "link");
@@ -796,6 +809,14 @@ function buildWbBar(bar) {
     bar.appendChild(b);
   }
   bar.appendChild(wbSep());
+  // 整理布局（白板不做自动排布，只把内容居中并适配屏幕）
+  const fitBtn = document.createElement("button");
+  fitBtn.className = "gm-wb-btn";
+  fitBtn.dataset.act = "fit";
+  fitBtn.title = "整理布局 (Ctrl+L)";
+  fitBtn.innerHTML = ICONS.fit;
+  fitBtn.addEventListener("click", () => fitAll());
+  bar.appendChild(fitBtn);
   // 更多菜单：嵌入网页 / 便签 / 清空白板（颜色在左侧属性面板中选择，顶栏不再重复）
   // 弹层挂 body（toggleBodyPop），避免被工具栏 overflow-y:hidden 裁剪
   const mb = document.createElement("button");
@@ -1342,9 +1363,7 @@ function mmFocusRoot() {
   editor.view.y = r.height / 2 - (root.y + s.h / 2) * editor.view.scale;
   editor.render();
 }
-function mmRelayout() {
-  layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); editor.pushHistory();
-}
+function mmRelayout() { fitAll(); }
 function toggleZen() {
   const on = document.body.classList.toggle("gm-zen");
   toast(on ? "禅模式：按 Esc 退出" : "已退出禅模式", "info");
@@ -1601,7 +1620,7 @@ const SHORTCUTS = {
       ["画笔", ["7"]], ["文字", ["8"]], ["图片", ["9"]], ["橡皮", ["0"]], ["激光笔", ["K"]],
     ],
     编辑器: [
-      ["移动画布", ["中键拖拽", "/", "Alt+拖拽"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]],
+      ["移动画布", ["中键拖拽", "/", "Alt+拖拽"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]], ["整理布局", ["Ctrl+L", "或", "工具栏"]],
       ["框选多选", ["拖空白处", "或", "Shift+拖"]], ["直线变换", ["拖端点 / 中点"]], ["自由变换", ["拖四角 / 四边手柄"]], ["删除", ["Delete"]],
       ["复制 / 粘贴", ["Ctrl+C", "/", "V"]], ["全部选中", ["Ctrl+A"]], ["显示网格", ["Ctrl+'"]],
       ["复制为 PNG", ["Shift+Alt+C"]], ["统计信息", ["Alt+/"]],
@@ -1616,7 +1635,7 @@ const SHORTCUTS = {
     编辑器: [
       ["框选多选", ["拖空白处", "或", "Shift+拖"]], ["连线", ["拖节点端口"]],
       ["移动画布", ["中键拖拽", "或", "Alt+拖拽"]], ["缩放", ["滚轮"]],
-      ["重置缩放", ["点击 100%"]], ["删除", ["Delete"]],
+      ["重置缩放", ["点击 100%"]], ["整理布局", ["Ctrl+L", "或", "工具栏"]], ["删除", ["Delete"]],
       ["撤销 / 重做", ["Ctrl+Z", "/", "Ctrl+Y"]], ["保存", ["Ctrl+S"]],
     ],
   },
@@ -1631,7 +1650,7 @@ const SHORTCUTS = {
       ["节点样式", ["选中节点", "左侧面板"]], ["备注弹框", ["点节点「注」徽标"]],
       ["框选多选", ["拖空白处", "或", "Shift+拖"]],
       ["关联线吸附", ["拖节点四角端点", "或", "悬停自动吸附"]],
-      ["移动画布", ["抓手 H", "/", "中键拖拽", "或", "Alt+拖拽"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]],
+      ["移动画布", ["抓手 H", "/", "中键拖拽", "或", "Alt+拖拽"]], ["缩放", ["滚轮"]], ["重置缩放", ["点击 100%"]], ["整理布局", ["Ctrl+L", "或", "工具栏"]],
       ["删除", ["Delete"]], ["撤销 / 重做", ["Ctrl+Z", "/", "Ctrl+Y"]], ["保存", ["Ctrl+S"]],
     ],
   },
@@ -1810,6 +1829,8 @@ function wireKeys() {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); saveNow(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); if (e.shiftKey) editor.redo(); else editor.undo(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") { e.preventDefault(); editor.redo(); return; }
+    // 整理布局（三模式通用）：内容居中并适配屏幕
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "l") { e.preventDefault(); fitAll(); return; }
     if (e.key === "Tab" && editor.mode === "mindmap") {
       e.preventDefault();
       const sel = [...editor.selection][0];

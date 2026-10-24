@@ -3,3 +3,8 @@ node_modules/
 *.log
 .DS_Store
 .env
+# 本地验证临时产物（截图 / 桩服务器 / 一次性脚本），不入库
+__*.png
+__*.mjs
+__*.js
+__test_server.py
