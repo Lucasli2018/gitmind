@@ -135,8 +135,13 @@ export function layoutMindmap(doc, layout) {
       placeX(root, baseX, -1);
       placeY(root, baseY);
 
-    } else if (layout === "mindmap" || layout === "elbow") {
-      // 经典双侧平衡（elbow 直角导图仅连线改直角折线，布局相同）：直接孩子按子树高度贪心分到左右
+    } else if (layout === "elbow") {
+      // 直角导图：所有子节点排在右侧（连线同侧、共用一条主干），布局同 logicRight
+      placeX(root, baseX, +1);
+      placeY(root, baseY);
+
+    } else if (layout === "mindmap") {
+      // 经典双侧平衡：直接孩子按子树高度贪心分到左右
       const direct = childrenMap.get(root.id) || [];
       const sorted = [...direct].sort((a, b) => subH(b) - subH(a));
       const leftG = [], rightG = [];

@@ -592,7 +592,9 @@ export class Editor {
 
   // 脑图父子连线的接出方向：按两节点相对位置实时判断（不再依赖布局遗留的 side，
   // 取消自动重排后节点可被随意拖动，几何方向才可靠）
+  // 直角布局（直角导图 / 目录组织）统一从右侧接出：所有子节点连线同侧、共用一条主干
   _mmSide(a, sa, b, sb) {
+    if (this.doc.layout === "list" || this.doc.layout === "elbow") return "right";
     const acx = a.x + sa.w / 2, acy = a.y + sa.h / 2, bcx = b.x + sb.w / 2, bcy = b.y + sb.h / 2;
     const dx = bcx - acx, dy = bcy - acy;
     if (Math.abs(dy) > Math.abs(dx)) return dy >= 0 ? "down" : "up";
@@ -884,7 +886,8 @@ export class Editor {
     let out = lead(ax, ay, c1.x, c1.y) + lead(bx, by, c2.x, c2.y) +
       LEV(c1.x, c1.y, "levA", TIP_L0) + LEV(c2.x, c2.y, "levB", TIP_L1);
     // 关联线额外保留原来的 3 个位置调节点：起点 / 中点（弯曲）/ 终点
-    if (e.assoc) {
+    // 3 个位置调节点（关联线 / 流程图连线通用）：起点 / 中点（弯曲）/ 终点
+    {
       const mc = this._edgePathMid(e, ends);
       out += POS(ax, ay, "p0", "起点：拖动可移动 / 吸附到其它节点，拖到空白处固定")
         + POS(mc.x, mc.y, "mid", "中点：拖动调节弯曲")
@@ -1934,6 +1937,10 @@ export class Editor {
     }
     const node = { id, x, y, w: 124, h: 44, text: "新节点", shape: "rounded", color: "#fff", textColor: "#1f2a37", stroke: parent.stroke || "#11b5a4", fontSize: 15, parentId, collapsed: false };
     this.doc.nodes.push(node);
+    // 外框 / 概括：往被框住的节点里加子节点时，新节点自动纳入分组范围（范围随内容自动扩展）
+    if (this.doc.groups && this.doc.groups.length) {
+      for (const g of this.doc.groups) if (Array.isArray(g.ids) && g.ids.includes(parentId)) g.ids.push(id);
+    }
     this.selection = new Set([id]);
     this.render(); this.onChange();
     this.pushHistory();
