@@ -46,6 +46,7 @@ export class Editor {
     this._marquee = null; this._laserDown = false;
     this._onToolChange = opts.onToolChange || null;
     this._onRender = opts.onRender || null;       // 每次渲染后回调（小地图等外部组件同步）
+    this._renderListeners = new Set();            // 外部订阅渲染（大纲面板随文档/选中刷新）
     // 编辑器行为设置（侧栏「设置」面板驱动，main.js 持久化）
     this.autoEditNewNode = true;  // 新节点自动进入文字编辑
     this.dblClickCreate = false;  // 双击空白处创建子节点（脑图）
@@ -307,6 +308,14 @@ export class Editor {
     const sig = this.mode + "|" + this.tool + "|" + [...this.selection].sort().join(",");
     if (sig !== this._lastUiSig) { this._lastUiSig = sig; if (this._onSelectionChange) this._onSelectionChange(); }
     if (this._onRender) this._onRender();
+    // 外部订阅者（大纲面板等）：随文档/选中状态实时同步，异常不影响渲染
+    if (this._renderListeners.size) for (const fn of [...this._renderListeners]) { try { fn(); } catch (_) {} }
+  }
+
+  // 订阅渲染回调（返回取消订阅函数）
+  onRender(fn) {
+    this._renderListeners.add(fn);
+    return () => this._renderListeners.delete(fn);
   }
 
   // ---------- 白板图形属性辅助 ----------

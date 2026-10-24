@@ -579,3 +579,26 @@ body.gm-zen .gm-right { display: none !important; }
 .gm-edge-handle-hit:active { cursor: grabbing; }
 .gm-edge-handle-hit { cursor: grab; }
 .gm-edge-handle-hit:active { cursor: grabbing; }
+
+/* ---------- 大纲面板（定位用只读列表） ---------- */
+.gm-outline-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.gm-outline-head span { display: block; margin-top: 4px; }
+.gm-outline-x {
+  border: none; background: transparent; color: #8a94a6; font-size: 20px; line-height: 1;
+  width: 28px; height: 28px; border-radius: 8px; cursor: pointer; flex: none;
+}
+.gm-outline-x:hover { background: #f1f4f8; color: #1f2a37; }
+.gm-outline-list {
+  flex: 1; overflow: auto; border: 1px solid #e8ecf1; border-radius: 10px; padding: 6px; background: #fcfdfe;
+}
+.gm-outline-item {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  border: none; background: transparent; border-radius: 8px;
+  padding: 6px 10px; cursor: pointer; text-align: left;
+  font-size: 13px; color: #334155; line-height: 1.5;
+}
+.gm-outline-item:hover { background: #eef6f5; }
+.gm-outline-item.active { background: #dcf5f1; color: #0b7d73; font-weight: 600; }
+.gm-outline-item .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; opacity: .85; }
+.gm-outline-item .txt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gm-outline-item .fold { flex: none; font-size: 10px; color: #9aa6b5; }
