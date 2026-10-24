@@ -440,8 +440,17 @@ function openEdgeModal(eid, derivedChildId) {
   const colBtn = (c) => `<button class="gm-ws-swatch${c === cur.stroke ? " active" : ""}" data-ek="stroke" data-ev="${c}" title="${c}" style="background:${c}"></button>`;
   const wBtn = (v) => `<button class="gm-ws-seg${cur.strokeWidth === v ? " active" : ""}" data-ek="strokeWidth" data-ev="${v}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="${v}"/></svg></button>`;
   const sBtn = (v, dash) => `<button class="gm-ws-seg${cur.strokeStyle === v ? " active" : ""}" data-ek="strokeStyle" data-ev="${v}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="2"${dash}/></svg></button>`;
-  const arrowRow = derived || (e && e.derived) ? "" :
-    `<div class="gm-ws-t">箭头</div><div class="gm-ws-row seg"><button class="gm-ws-seg${(e.arrow || e.arrow === null ? " active" : "")}" data-ek="arrow" data-ev="1" title="带箭头">→</button><button class="gm-ws-seg${(e.arrow === false ? " active" : "")}" data-ek="arrow" data-ev="0" title="无箭头">—</button></div>`;
+  // 箭头四样式（与连线样式面板一致）：无 / 左 / 右 / 双向，写 arrowMode；派生线写子节点 edgeArrowMode
+  const curArrow = derived ? (dChild.edgeArrowMode || "none")
+    : (e.arrowMode || (e.arrow === false ? "none" : (e.assoc ? "none" : "end")));
+  const ARROW_ATTRS = 'stroke="#1f2a37" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"';
+  const arrowRow =
+    `<div class="gm-ws-t">箭头</div><div class="gm-ws-row seg">` +
+    `<button class="gm-ws-seg${curArrow === "none" ? " active" : ""}" data-ek="arrowMode" data-ev="none" title="无箭头"><svg width="24" height="12"><line x1="3" y1="6" x2="21" y2="6" ${ARROW_ATTRS}/></svg></button>` +
+    `<button class="gm-ws-seg${curArrow === "start" ? " active" : ""}" data-ek="arrowMode" data-ev="start" title="左箭头"><svg width="24" height="12"><line x1="7" y1="6" x2="21" y2="6" ${ARROW_ATTRS}/><path d="M7,2 L3,6 L7,10" ${ARROW_ATTRS}/></svg></button>` +
+    `<button class="gm-ws-seg${curArrow === "end" ? " active" : ""}" data-ek="arrowMode" data-ev="end" title="右箭头"><svg width="24" height="12"><line x1="3" y1="6" x2="17" y2="6" ${ARROW_ATTRS}/><path d="M17,2 L21,6 L17,10" ${ARROW_ATTRS}/></svg></button>` +
+    `<button class="gm-ws-seg${curArrow === "both" ? " active" : ""}" data-ek="arrowMode" data-ev="both" title="双向箭头"><svg width="24" height="12"><line x1="7" y1="6" x2="17" y2="6" ${ARROW_ATTRS}/><path d="M7,2 L3,6 L7,10 M17,2 L21,6 L17,10" ${ARROW_ATTRS}/></svg></button>` +
+    `</div>`;
   const close = showModal("连线",
     `<div class="gm-ws-t">连线文字</div>` +
     `<input id="gmEdgeLabel" class="gm-note-ta" style="min-height:0;padding:9px 12px" maxlength="40" placeholder="可选文字" value="${escapeModalText(cur.label)}" />` +
@@ -460,10 +469,12 @@ function openEdgeModal(eid, derivedChildId) {
       if (k === "stroke") dChild.stroke = v;
       else if (k === "strokeWidth") dChild.strokeWidth = Number(v);
       else if (k === "strokeStyle") dChild.strokeStyle = v;
+      else if (k === "arrowMode") { if (v === "none") delete dChild.edgeArrowMode; else dChild.edgeArrowMode = v; }
+      editor.render(); editor.onChange(); editor.pushHistory();
     } else {
       const patch = {};
       if (k === "strokeWidth") patch.strokeWidth = Number(v);
-      else if (k === "arrow") patch.arrow = v === "1";
+      else if (k === "arrowMode") patch.arrowMode = v; // 显式存 none，避免流程线回退默认右箭头
       else patch[k] = v;
       editor.setEdgeStyleFor(eid, patch);
     }
@@ -824,9 +835,20 @@ function renderDerivedEdgePanel(panel, childId) {
   const colBtn = (c) => `<button class="gm-ws-swatch${c === cur.stroke ? " active" : ""}" data-ek="stroke" data-ev="${c}" title="${c}" style="background:${c}"></button>`;
   const wBtn = (v) => `<button class="gm-ws-seg${cur.strokeWidth === v ? " active" : ""}" data-ek="strokeWidth" data-ev="${v}" title="${v === 2 ? "细" : v === 4 ? "中" : "粗"}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="${v}"/></svg></button>`;
   const sBtn = (v, t, dash) => `<button class="gm-ws-seg${cur.strokeStyle === v ? " active" : ""}" data-ek="strokeStyle" data-ev="${v}" title="${t}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="2"${dash}/></svg></button>`;
+  // 箭头四样式（与连线样式面板一致），写子节点 edgeArrowMode
+  const curArrow = n.edgeArrowMode || "none";
+  const DAR = 'stroke="#1f2a37" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"';
+  const dABtn = (v, t, svg) => `<button class="gm-ws-seg${curArrow === v ? " active" : ""}" data-ek="arrowMode" data-ev="${v}" title="${t}">${svg}</button>`;
   panel.innerHTML =
     `<div class="gm-ws-t">连线样式</div>` +
     `<div class="gm-ws-row">${cols.map(colBtn).join("")}</div>` +
+    `<div class="gm-ws-t">箭头</div>` +
+    `<div class="gm-ws-row seg">` +
+      dABtn("none", "无箭头", `<svg width="24" height="12"><line x1="3" y1="6" x2="21" y2="6" ${DAR}/></svg>`) +
+      dABtn("start", "左箭头", `<svg width="24" height="12"><line x1="7" y1="6" x2="21" y2="6" ${DAR}/><path d="M7,2 L3,6 L7,10" ${DAR}/></svg>`) +
+      dABtn("end", "右箭头", `<svg width="24" height="12"><line x1="3" y1="6" x2="17" y2="6" ${DAR}/><path d="M17,2 L21,6 L17,10" ${DAR}/></svg>`) +
+      dABtn("both", "双向箭头", `<svg width="24" height="12"><line x1="7" y1="6" x2="17" y2="6" ${DAR}/><path d="M7,2 L3,6 L7,10 M17,2 L21,6 L17,10" ${DAR}/></svg>`) +
+    `</div>` +
     `<div class="gm-ws-t">线宽</div>` +
     `<div class="gm-ws-row seg">${wBtn(2) + wBtn(4) + wBtn(6)}</div>` +
     `<div class="gm-ws-t">线型</div>` +
@@ -840,10 +862,13 @@ function renderDerivedEdgePanel(panel, childId) {
   panel.querySelectorAll("[data-ek]").forEach((b) => {
     b.addEventListener("click", () => {
       const k = b.dataset.ek, v = b.dataset.ev;
-      if (k === "strokeWidth") editor.setNodeStyle({ strokeWidth: Number(v) });
-      else if (k === "bend") editor.setDerivedEdgeBend(childId, v);
+      // 注意：选中集是派生线 "e:p-xxx"，setNodeStyle 会把 e: 键过滤掉导致无效，须直写子节点
+      if (k === "strokeWidth") n.strokeWidth = Number(v);
+      else if (k === "bend") { editor.setDerivedEdgeBend(childId, v); refreshWbStylePanel(); return; }
       else if (k === "label") { openEdgeModal(null, childId); return; }
-      else editor.setNodeStyle({ [k]: v });
+      else if (k === "arrowMode") { if (v === "none") delete n.edgeArrowMode; else n.edgeArrowMode = v; }
+      else n[k] = v;
+      editor.render(); editor.onChange(); editor.pushHistory();
       refreshWbStylePanel();
     });
   });

@@ -240,7 +240,7 @@ export class Editor {
     if (this.doc.type === "mindmap") {
       edges = [];
       for (const n of this.doc.nodes) {
-        if (n.parentId && this.nodeById(n.parentId)) edges.push({ id: "p-" + n.id, from: n.parentId, to: n.id, derived: true, label: n.edgeLabel || null, bend: n.edgeBend || null });
+        if (n.parentId && this.nodeById(n.parentId)) edges.push({ id: "p-" + n.id, from: n.parentId, to: n.id, derived: true, label: n.edgeLabel || null, bend: n.edgeBend || null, arrowMode: n.edgeArrowMode || null });
       }
       // 关联线（工具栏创建的任意两节点连线）附加在父子连线之上
       edges = edges.concat(this.doc.edges.filter((e) => e.assoc));
@@ -654,7 +654,7 @@ export class Editor {
         d = `M ${ax},${ay} C ${ax},${my} ${bx},${my} ${bx},${by}`;
       }
     }
-    const marker = this.doc.type === "mindmap" ? "" : `${mkStart}${mkEnd}`;
+    const marker = `${mkStart}${mkEnd}`;
     let label = "";
     if (e.label) {
       const mid = this._quadMid(ax, ay, bx, by, e.bend);
@@ -1062,8 +1062,23 @@ export class Editor {
       }
     }
 
-    // ---------- 流程图：形状工具激活时，点击处创建组件（先选工具再点画布，不自动落点） ----------
+    // ---------- 流程图：形状工具激活时，点击处创建组件（先选工具再点画布，不自动落点）----------
+    // 点击在已有节点包围盒内（文字节点无背景矩形，须按 bbox 命中）：文字工具原地编辑该节点文字，
+    // 其余形状工具转为选中，均不再叠加新建
     if (this.mode === "flowchart" && FC_SHAPE_TOOLS.includes(this.tool)) {
+      const w0 = this.toWorld(e.clientX, e.clientY);
+      let hitId0 = null;
+      for (let i = this.doc.nodes.length - 1; i >= 0; i--) {
+        const nd = this.doc.nodes[i];
+        const bb = this.nodeBBox(nd);
+        if (w0.x >= bb.x && w0.x <= bb.x + bb.w && w0.y >= bb.y && w0.y <= bb.y + bb.h) { hitId0 = nd.id; break; }
+      }
+      if (hitId0) {
+        if (this.tool === "text") this.beginTextEdit(hitId0);
+        else { this.selection = new Set([hitId0]); this.render(); }
+        this.setTool("select");
+        return;
+      }
       const w = this.toWorld(e.clientX, e.clientY);
       this.addFlowShape(this.tool, w.x, w.y);
       this.setTool("select");
@@ -1332,21 +1347,27 @@ export class Editor {
       if (d.moved) {
         const ed = this.edgeById(d.id);
         if (ed && (d.kind === "p0" || d.kind === "p1")) {
-          // 端点拖拽收尾：吸附到节点则重新绑定 from/to 并清掉固定偏移；吸附无效则保留固定端点
+          // 端点拖拽收尾：
+          // 吸附到第三方节点 -> 重新绑定 from/to（清掉旧端口与固定端点）；
+          // 吸附到端点原本挂着的节点 -> 保留边框落点（同节点上调整接出位置，不能回弹复原）；
+          // 落在空白处 -> 保留固定端点；吸附到对端节点（无效）-> 回退自动吸附
           const isP0 = d.kind === "p0";
-          const otherRef = isP0 ? ed.to : ed.from;
-          if (d.snapTo && d.snapTo !== otherRef) {
+          const otherRef = isP0 ? ed.to : ed.from;  // 对端节点
+          const origRef = isP0 ? ed.from : ed.to;   // 端点原本挂着的节点
+          if (d.snapTo && d.snapTo !== otherRef && d.snapTo !== origRef) {
             const dup = this.doc.edges.some((x) => x !== ed && x.assoc && x.from === (isP0 ? d.snapTo : ed.from) && x.to === (isP0 ? ed.to : d.snapTo));
             if (!dup) {
-              if (isP0) ed.from = d.snapTo; else ed.to = d.snapTo;
+              if (isP0) { ed.from = d.snapTo; delete ed.fromPort; delete ed.aPt; }
+              else { ed.to = d.snapTo; delete ed.toPort; delete ed.bPt; }
+            } else {
+              // 已存在重复关联线：不重绑，回退自动吸附
               if (isP0) delete ed.aPt; else delete ed.bPt;
             }
-          } else if (!d.snapTo) {
-            // 落在空白处：保留拖拽中写入的 aPt / bPt 固定端点
-          } else {
+          } else if (d.snapTo === otherRef) {
             // 吸附到了对端节点（无效）：回退为自动吸附
             if (isP0) delete ed.aPt; else delete ed.bPt;
           }
+          // 其余情况（空白 / 原节点边框落点）：保留拖拽中写入的 aPt / bPt 固定端点
         }
         this.render(); this.onChange(); this.pushHistory();
       }
