@@ -78,6 +78,8 @@ export class Editor {
     window.addEventListener("pointerup", (e) => this.onUp(e));
     svg.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
     svg.addEventListener("dblclick", (e) => this.onDblClick(e));
+    // 窗口失焦兜底：右键/中键拖拽中切走窗口收不到 pointerup，立即还原光标与拖拽态
+    window.addEventListener("blur", () => this._rmbCancel());
 
     // 双指捏合缩放（移动端）：与 pointer 单指平移/拖拽共存
     svg.addEventListener("touchstart", (e) => this.onTouchStart(e), { passive: false });
@@ -1413,6 +1415,16 @@ export class Editor {
 
   // 右键刚拖拽过画布（400ms 内）：contextmenu 不弹菜单
   rmbJustDragged() { return Date.now() - this._rmbDraggedAt < 400; }
+
+  // 右键拖拽态兜底清理（窗口失焦等收不到 pointerup 的场景）：立刻还原光标与拖拽态
+  _rmbCancel() {
+    if (!this._rmb && !this._pan) return;
+    this._rmb = null;
+    this._pan = null;
+    this.svg.classList.remove("panning");
+    this.container.style.cursor = this._rmbCursor || "default";
+    this._rmbCursor = null;
+  }
 
   // 切换节点折叠状态（脑图）：重排布局后渲染
   toggleCollapse(id) {
