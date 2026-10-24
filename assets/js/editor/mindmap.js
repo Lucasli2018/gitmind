@@ -13,8 +13,15 @@ export function layoutMindmap(doc, layout) {
   layout = layout || doc.layout || "mindmap";
   doc.layout = layout;
 
+  // 坐标防护：undefined/NaN 坐标（旧数据、导入异常）先归零，避免布局结果 NaN 导致整图消失
+  for (const n of nodes) {
+    if (!Number.isFinite(n.x)) n.x = 0;
+    if (!Number.isFinite(n.y)) n.y = 0;
+  }
+
   const childrenMap = new Map();
   const roots = [];
+  const idSet = new Set(nodes.map((n) => n.id));
   // 折叠感知：被折叠节点的整个子树视为隐藏，布局时按叶子处理
   const hidden = new Set();
   const kidsAll = new Map();
@@ -26,7 +33,8 @@ export function layoutMindmap(doc, layout) {
   }
   for (const n of nodes) {
     if (hidden.has(n.id)) continue;
-    if (n.parentId == null) roots.push(n);
+    // parentId 为空或父节点不存在（孤儿节点）都按根处理，否则孤儿永不参与布局、坐标失控
+    if (n.parentId == null || !idSet.has(n.parentId)) { n.parentId = null; roots.push(n); }
     else { if (!childrenMap.has(n.parentId)) childrenMap.set(n.parentId, []); childrenMap.get(n.parentId).push(n); }
   }
   if (!roots.length) return;

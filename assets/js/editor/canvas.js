@@ -28,7 +28,8 @@ export class Editor {
     this.sizes = new Map();
     this._drag = null; this._pan = null; this._connect = null; this._stroke = null;
     this._pinch = null;
-    this._rmb = null; this._rmbDraggedAt = 0;   // 右键拖拽平移画布（长按右键拖动）
+    this._rmbLastDown = 0;                       // 右键上次按下时间（双击检测：右键双击切换抓手工具）
+    this._rmbDblAt = 0;                          // 右键双击发生时间（contextmenu 抑制菜单用）
     this._edgeDrag = null;                       // 连线中点手柄拖拽（调节弯曲）
     this._pendingCollapse = null;                // 脑图折叠徽标（pointerup 时切换）
     this._connectHover = null;                   // 连线拖拽中的吸附高亮
@@ -44,6 +45,7 @@ export class Editor {
     this._newShape = null; this._erasing = false; this._laser = null; this._laserRaf = null;
     this._marquee = null; this._laserDown = false;
     this._onToolChange = opts.onToolChange || null;
+    this._onRender = opts.onRender || null;       // 每次渲染后回调（小地图等外部组件同步）
     // 编辑器行为设置（侧栏「设置」面板驱动，main.js 持久化）
     this.autoEditNewNode = true;  // 新节点自动进入文字编辑
     this.dblClickCreate = false;  // 双击空白处创建子节点（脑图）
@@ -76,6 +78,21 @@ export class Editor {
     svg.addEventListener("pointerdown", (e) => this.onDown(e));
     // 右键按下即阻止默认行为：抑制浏览器/鼠标手势插件把"右键拖拽"解释成后退/前进
     container.addEventListener("mousedown", (e) => { if (e.button === 2) e.preventDefault(); });
+    // 右键双击检测（window 捕获层）：第二次右键可能落在右键菜单上（pointerdown 到不了 svg），
+    // 因此挂 window 并把「右键菜单上的右键」也视作画布右键。双击 -> 切换抓手工具（替代旧长按右键拖拽平移）
+    window.addEventListener("pointerdown", (e) => {
+      if (e.button !== 2) return;
+      const t = e.target;
+      const inCanvas = this.container.contains(t) || (t.closest && t.closest(".gm-ctx-menu"));
+      if (!inCanvas) return;
+      const now = Date.now();
+      if (now - this._rmbLastDown < 350) {
+        this._rmbLastDown = 0;
+        this._rmbDblAt = now;
+        this.setTool(this.tool === "hand" ? "select" : "hand");
+        document.querySelectorAll(".gm-ctx-menu").forEach((m) => m.remove()); // 双击生效，顺手收起菜单
+      } else this._rmbLastDown = now;
+    }, true);
     window.addEventListener("pointermove", (e) => this.onMove(e));
     window.addEventListener("pointerup", (e) => this.onUp(e));
     svg.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
@@ -274,6 +291,7 @@ export class Editor {
     // 工具或选择集变化时通知 UI（属性面板刷新可见性/取值），签名去重避免高频 DOM 操作
     const sig = this.mode + "|" + this.tool + "|" + [...this.selection].sort().join(",");
     if (sig !== this._lastUiSig) { this._lastUiSig = sig; if (this._onSelectionChange) this._onSelectionChange(); }
+    if (this._onRender) this._onRender();
   }
 
   // ---------- 白板图形属性辅助 ----------
@@ -879,7 +897,9 @@ export class Editor {
   fitView(immediate) {
     const b = this.getBounds();
     const r = this.rect();
-    if (!b) { this.view = { x: r.width * 0.12, y: r.height / 2, scale: 1 }; this.render(); return; }
+    if (!b || !Number.isFinite(b.x + b.y + b.w + b.h) || b.w <= 0 || b.h <= 0) {
+      this.view = { x: r.width * 0.12, y: r.height / 2, scale: 1 }; this.render(); return;
+    }
     const pad = 60;
     const scale = Math.min(1.3, Math.max(0.2, Math.min((r.width - pad) / b.w, (r.height - pad) / b.h)));
     this.view.scale = scale;
@@ -906,11 +926,13 @@ export class Editor {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const n of this.doc.nodes) {
       const b = this.nodeBBox(n); if (!b) continue;
+      // 坐标异常（undefined/NaN，如旧数据孤儿节点）的节点不参与包围盒，避免视图变 NaN 整图消失
+      if (!Number.isFinite(b.x + b.y + b.w + b.h)) continue;
       minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
       maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
     }
-    for (const st of this.doc.strokes) for (const p of st.points || []) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
-    if (minX === Infinity) return null;
+    for (const st of this.doc.strokes) for (const p of st.points || []) { if (!Number.isFinite(p.x + p.y)) continue; minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+    if (!Number.isFinite(minX)) return null;
     return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
   }
 
@@ -924,14 +946,9 @@ export class Editor {
       this._pan = { sx: e.clientX - r0.left, sy: e.clientY - r0.top, ox: this.view.x, oy: this.view.y };
       return;
     }
-    // 右键：长按拖拽平移画布（未拖动则由 contextmenu 弹出右键菜单），拖动中光标显示为手
+    // 右键：仅阻止默认行为；双击检测统一在 window 捕获层（见下方），此处只短路
     if (e.button === 2) {
       e.preventDefault();
-      const r0 = this.rect();
-      this._rmb = { sx: e.clientX - r0.left, sy: e.clientY - r0.top, ox: this.view.x, oy: this.view.y, moved: false };
-      this._rmbCursor = this.container.style.cursor;
-      this.container.style.cursor = "grabbing";
-      this.svg.classList.add("panning");
       return;
     }
     if (e.button !== 0) return;
@@ -1163,14 +1180,6 @@ export class Editor {
 
   onMove(e) {
     if (this._pinch) return;
-    // 右键拖拽平移画布
-    if (this._rmb) {
-      const r = this.rect();
-      const dx = e.clientX - r.left - this._rmb.sx, dy = e.clientY - r.top - this._rmb.sy;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) this._rmb.moved = true;
-      if (this._rmb.moved) { this.view.x = this._rmb.ox + dx; this.view.y = this._rmb.oy + dy; this.render(); }
-      return;
-    }
     // 关联线工具悬停：自动吸附高亮光标附近的节点（点击 / 松开连线时直接采用）
     if (this.tool === "link" && (this.mode === "mindmap" || this.mode === "flowchart") && !this._connect) {
       const hid = this.snapNodeAt(e.clientX, e.clientY);
@@ -1321,17 +1330,6 @@ export class Editor {
   }
 
   onUp(e) {
-    // 右键拖拽平移结束：恢复光标；记录拖动时间戳（供 contextmenu 抑制弹菜单）
-    if (this._rmb) {
-      const dragged = this._rmb.moved;
-      if (dragged) this._rmbDraggedAt = Date.now();
-      this._rmb = null;
-      this.svg.classList.remove("panning");
-      this.container.style.cursor = this._rmbCursor || "default";
-      this._rmbCursor = null;
-      if (dragged) this.setTool("select"); // 右键拖完画布自动切回选择工具
-      return;
-    }
     // 备注徽标：pointerup 时打开备注弹框（任何拖拽分支之前处理）
     if (this._pendingBadge) {
       const id = this._pendingBadge;
@@ -1433,17 +1431,14 @@ export class Editor {
     if (this._pan) { this._pan = null; return; }
   }
 
-  // 右键刚拖拽过画布（400ms 内）：contextmenu 不弹菜单
-  rmbJustDragged() { return Date.now() - this._rmbDraggedAt < 400; }
+  // 刚发生右键双击（450ms 内）：contextmenu 不弹菜单（双击用于切换抓手工具）
+  rmbDoubleJustNow() { return Date.now() - this._rmbDblAt < 450; }
 
-  // 右键拖拽态兜底清理（窗口失焦等收不到 pointerup 的场景）：立刻还原光标与拖拽态
+  // 平移拖拽态兜底清理（窗口失焦等收不到 pointerup 的场景）：立刻还原光标与拖拽态
   _rmbCancel() {
-    if (!this._rmb && !this._pan) return;
-    this._rmb = null;
+    if (!this._pan) return;
     this._pan = null;
     this.svg.classList.remove("panning");
-    this.container.style.cursor = this._rmbCursor || "default";
-    this._rmbCursor = null;
   }
 
   // 切换节点折叠状态（脑图）：重排布局后渲染

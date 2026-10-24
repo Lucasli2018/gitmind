@@ -500,3 +500,72 @@ body.gm-zen .gm-right { display: none !important; }
 .gm-img-ph { pointer-events: none; }
 .gm-img-ph rect { fill: #f1f4f8; stroke: #d6dde6; }
 .gm-img-ph text { fill: #aab3bf; font-size: 12px; }
+
+/* ---------- 右侧浮动面板（主题 / 结构，参考 XMind） ---------- */
+.gm-xp {
+  position: fixed; z-index: 1200;
+  width: 360px; max-height: min(72vh, 640px); overflow: auto;
+  background: #fff; border: 1px solid #e3e9ef; border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(15, 30, 50, .14);
+  padding: 14px 16px 16px;
+  animation: gmXpIn .16s ease;
+}
+@keyframes gmXpIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.gm-xp-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 12px; font-size: 14px; color: #1f2a37;
+}
+.gm-xp-head b { font-weight: 600; }
+.gm-xp-x {
+  border: none; background: transparent; color: #8a94a6;
+  font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 6px; border-radius: 6px;
+}
+.gm-xp-x:hover { background: #f1f4f8; color: #1f2a37; }
+.gm-xp-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.gm-theme-card {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  border: 1.5px solid #e3e9ef; border-radius: 10px; background: #fff;
+  padding: 8px 8px 7px; cursor: pointer; transition: border-color .12s, box-shadow .12s;
+}
+.gm-theme-card svg { display: block; border-radius: 6px; }
+.gm-theme-card span { font-size: 12px; color: #4a5568; }
+.gm-theme-card:hover { border-color: #b9c6d2; box-shadow: 0 3px 10px rgba(15,30,50,.08); }
+.gm-theme-card.active { border-color: #11b5a4; box-shadow: 0 0 0 2px rgba(17, 181, 164, .18); }
+.gm-theme-card.active span { color: #0b7d73; font-weight: 600; }
+.gm-xp-list { display: flex; flex-direction: column; gap: 10px; }
+.gm-struct-card {
+  display: flex; align-items: center; gap: 12px;
+  border: 1.5px solid #e3e9ef; border-radius: 10px; background: #fff;
+  padding: 8px 12px; cursor: pointer; text-align: left;
+  transition: border-color .12s, box-shadow .12s;
+}
+.gm-struct-card svg { flex: none; display: block; border-radius: 6px; }
+.gm-struct-card .t { font-size: 13px; color: #1f2a37; }
+.gm-struct-card:hover { border-color: #b9c6d2; box-shadow: 0 3px 10px rgba(15,30,50,.08); }
+.gm-struct-card.active { border-color: #11b5a4; box-shadow: 0 0 0 2px rgba(17, 181, 164, .18); }
+.gm-struct-card.active .t { color: #0b7d73; font-weight: 600; }
+
+/* ---------- 小地图（画布右下角缩略导航） ---------- */
+.gm-minimap { position: absolute; right: 14px; bottom: 58px; z-index: 60; }
+.gm-minimap .gm-mm-view {
+  position: relative; width: 208px; height: 136px;
+  background: #fff; border: 1px solid #dfe6ee; border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(15, 30, 50, .14);
+  overflow: hidden;
+}
+.gm-minimap svg { display: block; cursor: crosshair; }
+.gm-minimap .gm-mm-close {
+  position: absolute; top: 3px; right: 4px; width: 20px; height: 20px;
+  border: none; border-radius: 6px; background: rgba(255,255,255,.85); color: #8a94a6;
+  font-size: 14px; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s;
+}
+.gm-minimap .gm-mm-view:hover .gm-mm-close { opacity: 1; }
+.gm-minimap .gm-mm-close:hover { background: #eef2f6; color: #1f2a37; }
+.gm-minimap .gm-mm-open {
+  display: none; width: 34px; height: 30px;
+  border: 1px solid #dfe6ee; border-radius: 8px; background: #fff; color: #6b7686;
+  font-size: 15px; cursor: pointer; box-shadow: 0 4px 14px rgba(15,30,50,.12);
+}
+.gm-minimap .gm-mm-open:hover { color: #0b7d73; border-color: #b9c6d2; }
+.gm-minimap.collapsed .gm-mm-view { display: none; }
+.gm-minimap.collapsed .gm-mm-open { display: block; }

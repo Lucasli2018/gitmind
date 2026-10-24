@@ -6,6 +6,7 @@ import { Editor } from "./canvas.js";
 import { FC_TOOLS } from "./flowchart.js";
 import { WB_TOOLS, WB_MORE, WB_COLORS } from "./whiteboard.js";
 import { exportSVG, exportPNG, exportJSON, importJSON, getExportSVG } from "./export.js";
+import { initMinimap } from "./minimap.js";
 import { layoutMindmap } from "./mindmap.js";
 import { newId } from "./model.js";
 
@@ -49,6 +50,13 @@ const THEMES = {
   gray: ["#334155", "#475569", "#64748b", "#0f766e", "#7c3aed", "#0ea5e9"],
   rainbow: ["#e5484d", "#f5a623", "#16a34a", "#0ea5e9", "#7c3aed", "#ec4899"],
 };
+// ---------- 主题（右侧浮动面板，卡片带缩略预览，参考 XMind） ----------
+const THEME_NAMES = {
+  teal: "经典", ocean: "海洋", sunset: "落日", forest: "森林", classic: "缤纷", blue: "商务蓝",
+  purple: "梦幻紫", rose: "玫瑰", orange: "暖阳", gray: "灰调", rainbow: "彩虹", plain: "朴素",
+};
+// 追加一套朴素灰主题
+THEMES.plain = ["#334155", "#64748b", "#94a3b8", "#475569", "#78716c", "#57534e"];
 let currentTheme = "teal";
 
 let map = null;
@@ -116,7 +124,7 @@ function ensureRoot() {
 }
 
 // ---------- 主题 ----------
-function applyTheme(name) {
+function applyTheme(name, opts = {}) {
   const pal = THEMES[name]; if (!pal) return;
   currentTheme = name;
   const cm = childrenMap();
@@ -128,24 +136,27 @@ function applyTheme(name) {
     for (const c of cm.get(id) || []) paint(c.id, color);
   }
   roots.forEach((r, i) => paint(r.id, pal[i % pal.length]));
+  editor.doc.theme = name; // 主题随文档持久化
   if (editor.doc.type === "mindmap") layoutMindmap(editor.doc);
   editor.render(); editor.onChange();
-  editor.pushHistory();
-  document.querySelectorAll("#themes .gm-theme").forEach((el) => el.classList.toggle("active", el.dataset.theme === name));
+  if (!opts.silent) editor.pushHistory();
+  document.querySelectorAll("[data-theme]").forEach((el) => el.classList.toggle("active", el.dataset.theme === name));
 }
-function buildThemes() {
-  const box = document.getElementById("themes");
-  box.innerHTML = "";
-  for (const name of Object.keys(THEMES)) {
-    const pal = THEMES[name];
-    const el = document.createElement("div");
-    el.className = "gm-theme" + (name === currentTheme ? " active" : "");
-    el.dataset.theme = name;
-    el.style.background = `linear-gradient(135deg, ${pal[0]}, ${pal[1]})`;
-    el.title = name;
-    el.addEventListener("click", () => applyTheme(name));
-    box.appendChild(el);
-  }
+
+// 主题卡片缩略预览：根节点 + 3 个子节点的迷你导图
+function themePreviewSVG(pal) {
+  const R = (x, y, w, h, fill, rx = 5) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${fill}"/>`;
+  const kids = [[74, 8], [74, 32], [74, 56]];
+  const lines = kids.map(([, y], i) => `<path d="M46,40 C60,40 58,${y + 8} 74,${y + 8}" fill="none" stroke="${pal[i + 1]}" stroke-width="1.6"/>`).join("");
+  return `<svg viewBox="0 0 148 72" width="148" height="72">` +
+    `<rect width="148" height="72" rx="6" fill="#f6f8fa"/>` + lines +
+    kids.map(([x, y], i) => R(x, y, 56, 16, pal[(i % 3) + 1])).join("") +
+    R(8, 30, 38, 20, pal[0], 8) + `</svg>`;
+}
+function themeCardHTML(name) {
+  const pal = THEMES[name];
+  return `<button class="gm-theme-card${name === currentTheme ? " active" : ""}" data-theme="${name}" title="${THEME_NAMES[name] || name}">` +
+    themePreviewSVG(pal) + `<span>${THEME_NAMES[name] || name}</span></button>`;
 }
 
 // ---------- 布局结构切换 ----------
@@ -156,13 +167,85 @@ function setLayout(layout) {
   editor.fitView(true);
   editor.onChange();
   editor.pushHistory();
-  document.querySelectorAll("#layouts button").forEach((b) => b.classList.toggle("active", b.dataset.layout === layout));
+  document.querySelectorAll("[data-layout]").forEach((b) => b.classList.toggle("active", b.dataset.layout === layout));
 }
-function buildLayouts() {
-  document.querySelectorAll("#layouts button").forEach((b) => b.addEventListener("click", () => setLayout(b.dataset.layout)));
-  // 同步当前文档布局的激活态
-  const cur = editor.doc.layout || "mindmap";
-  document.querySelectorAll("#layouts button").forEach((b) => b.classList.toggle("active", b.dataset.layout === cur));
+
+// ---------- 右侧浮动面板（主题 / 结构，参考 XMind；同一时间只开一个） ----------
+const STRUCTS = [
+  { k: "mindmap", label: "思维导图", desc: "经典双侧平衡" },
+  { k: "logicRight", label: "向右逻辑图", desc: "层级向右展开" },
+  { k: "logicLeft", label: "向左逻辑图", desc: "层级向左展开" },
+  { k: "structure", label: "组织结构图", desc: "自上而下分层" },
+  { k: "list", label: "目录组织图", desc: "向右缩进列表" },
+];
+// 结构卡片缩略图：按布局画根节点 + 子节点示意
+function structPreviewSVG(kind) {
+  const C = "#11b5a4", K = "#7fd6cb", L = "#c9d4de";
+  const R = (x, y, w, h, f) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="${f}"/>`;
+  const ln = (d) => `<path d="${d}" fill="none" stroke="${L}" stroke-width="1.5"/>`;
+  let s = "";
+  if (kind === "mindmap") {
+    s = ln("M34,22 C44,22 40,10 52,10") + ln("M34,22 C44,22 40,34 52,34") + ln("M34,22 C24,22 28,10 16,10") + ln("M34,22 C24,22 28,34 16,34") +
+      R(16, 6, 20, 8, K) + R(52, 6, 20, 8, K) + R(12, 6, 20, 8, K) + R(36, 16, 28, 12, C);
+  } else if (kind === "logicRight") {
+    s = ln("M26,22 C36,22 34,9 46,9") + ln("M26,22 C36,22 34,21 46,21") + ln("M26,22 C36,22 34,33 46,33") +
+      R(46, 5, 22, 8, K) + R(46, 17, 22, 8, K) + R(46, 29, 22, 8, K) + R(8, 16, 18, 12, C);
+  } else if (kind === "logicLeft") {
+    s = ln("M42,22 C32,22 34,9 22,9") + ln("M42,22 C32,22 34,21 22,21") + ln("M42,22 C32,22 34,33 22,33") +
+      R(0, 5, 22, 8, K) + R(0, 17, 22, 8, K) + R(0, 29, 22, 8, K) + R(42, 16, 18, 12, C);
+  } else if (kind === "structure") {
+    s = ln("M21,16 v6 M9,26 v-4 h24 v4 M9,26 h0 M9,22 h24") + ln("M9,26 v4 M33,26 v4") +
+      R(13, 6, 16, 10, C) + R(3, 30, 16, 8, K) + R(27, 30, 16, 8, K);
+  } else {
+    s = ln("M12,10 v20 M12,30 h8 M12,18 h8") +
+      R(6, 5, 18, 9, C) + R(20, 14, 22, 8, K) + R(20, 26, 22, 8, K);
+  }
+  return `<svg viewBox="0 0 68 44" width="68" height="44"><rect width="68" height="44" rx="6" fill="#f6f8fa"/>${s}</svg>`;
+}
+function closeXPanel() {
+  const p = document.getElementById("gmXPanel");
+  if (p) p.remove();
+  document.querySelectorAll(".gm-side-rail button").forEach((b) => b.classList.remove("active"));
+}
+// 打开（或切换/关闭）右侧浮动面板：kind = "theme" | "structure"
+function openXPanel(kind, btn) {
+  const exist = document.getElementById("gmXPanel");
+  const wasSame = exist && exist.dataset.kind === kind;
+  closeXPanel();
+  if (wasSame) return; // 再点同一个图标 = 关闭
+  if (editor.mode !== "mindmap") { toast("主题与结构仅思维导图模式支持", "info"); return; }
+  const panel = document.createElement("div");
+  panel.className = "gm-xp";
+  panel.dataset.kind = kind;
+  panel.id = "gmXPanel";
+  if (kind === "theme") {
+    panel.innerHTML =
+      `<div class="gm-xp-head"><b>主题</b><button class="gm-xp-x" aria-label="关闭">×</button></div>` +
+      `<div class="gm-xp-grid">${Object.keys(THEMES).map(themeCardHTML).join("")}</div>`;
+    panel.querySelectorAll("[data-theme]").forEach((el) => el.addEventListener("click", () => {
+      applyTheme(el.dataset.theme);
+      panel.querySelectorAll("[data-theme]").forEach((x) => x.classList.toggle("active", x.dataset.theme === el.dataset.theme));
+    }));
+  } else {
+    const cur = editor.doc.layout || "mindmap";
+    panel.innerHTML =
+      `<div class="gm-xp-head"><b>结构</b><button class="gm-xp-x" aria-label="关闭">×</button></div>` +
+      `<div class="gm-xp-list">${STRUCTS.map((s) =>
+        `<button class="gm-struct-card${s.k === cur ? " active" : ""}" data-layout="${s.k}" title="${s.desc}">` +
+        structPreviewSVG(s.k) + `<span class="t">${s.label}</span></button>`).join("")}</div>`;
+    panel.querySelectorAll("[data-layout]").forEach((el) => el.addEventListener("click", () => {
+      setLayout(el.dataset.layout);
+      panel.querySelectorAll("[data-layout]").forEach((x) => x.classList.toggle("active", x.dataset.layout === el.dataset.layout));
+    }));
+  }
+  panel.querySelector(".gm-xp-x").addEventListener("click", closeXPanel);
+  document.body.appendChild(panel);
+  if (btn) {
+    btn.classList.add("active");
+    const r = btn.getBoundingClientRect();
+    panel.style.top = Math.max(64, Math.min(r.top - 8, window.innerHeight - panel.offsetHeight - 16)) + "px";
+    panel.style.right = Math.max(10, window.innerWidth - r.left + 10) + "px";
+  }
 }
 
 // ---------- 工具栏 ----------
@@ -186,9 +269,9 @@ function buildToolbar() {
 }
 
 // 脑图顶部工具栏（图标在上文字在下，参考 mind-map）
+// 撤销/重做不再放工具栏（与流程图一致，走顶栏 + Ctrl+Z/Y）；首位为箭头选择工具
 const MM_TOOLS = [
-  { act: "undo", label: "回退", icon: "undo" },
-  { act: "redo", label: "前进", icon: "redo" },
+  { act: "select", label: "箭头", icon: "cursor", key: "V" },
   { act: "hand", label: "抓手", icon: "hand", key: "H" },
 
   { act: "child", label: "子节点", icon: "plus", key: "Tab" },
@@ -226,7 +309,7 @@ function toggleBodyPop(anchor, pop) {
 function buildMmBar(bar) {
   bar.innerHTML = "";
   bar.classList.add("gm-fc-bar");
-  const groupOf = (act) => (act === "undo" || act === "redo" || act === "hand" ? 1
+  const groupOf = (act) => (act === "select" || act === "hand" ? 1
     : act === "child" || act === "sibling" || act === "delete" ? 2
     : act === "image" || act === "icon" || act === "href" || act === "note" || act === "summary" || act === "frame" ? 3 : 4);
   let lastGroup = null;
@@ -265,8 +348,7 @@ function onMmAction(act, arg) {
   const selId = [...editor.selection][0];
   const node = selId ? editor.nodeById(selId) : null;
   const needNode = () => { if (!node) toast("请先选中一个节点", "info"); return !node; };
-  if (act === "undo") { editor.undo(); return; }
-  if (act === "redo") { editor.redo(); return; }
+  if (act === "select") { editor.setTool("select"); refreshFcActive(); return; }
   if (act === "hand") { editor.setTool(editor.tool === "hand" ? "select" : "hand"); refreshFcActive(); return; }
   if (act === "delete") { editor.deleteSelection(); return; }
   if (act === "layout") { layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); return; }
@@ -590,8 +672,7 @@ function onRailAction(act, btn) {
     editor.render(); // 触发 onSelectionChange -> 刷新样式面板
     flashPanel(document.getElementById("wbStylePanel"));
   } else if (act === "theme" || act === "structure") {
-    const target = document.getElementById(act === "theme" ? "themePanel" : "layoutPanel");
-    if (target) { target.scrollIntoView({ behavior: "smooth", block: "center" }); flashPanel(target); }
+    openXPanel(act, btn);
   } else if (act === "outline") {
     import("./outline.js").then((m) => m.openOutline(editor));
   } else if (act === "settings") {
@@ -1070,7 +1151,12 @@ const hideWbMenu = hideCtxMenu; // 兼容旧引用
 function wireContextMenus() {
   editor.container.addEventListener("contextmenu", (e) => {
     e.preventDefault();
-    if (editor.rmbJustDragged && editor.rmbJustDragged()) return; // 右键拖拽平移过画布，不弹菜单
+    // 右键双击切换抓手工具的第二次右键：不弹菜单，只给提示（双击检测在 canvas 的 mousedown 打点）
+    if (editor.rmbDoubleJustNow && editor.rmbDoubleJustNow()) {
+      hideCtxMenu();
+      if (editor.tool === "hand") toast("抓手工具：按住左键拖动平移画布，再次右键双击切回箭头", "info");
+      return;
+    }
     // 右键命中：连线 / 节点 / 分组(外框、概括) 纳入选中，空白则清空
     const edgeHit = e.target.closest && e.target.closest("[data-edge]");
     const groupHit = e.target.closest && e.target.closest(".gm-group");
@@ -1477,7 +1563,7 @@ function updateHelpKeys() {
       `框选：空白处左键拖拽（Shift 叠加）<br/>` +
       `删除：Delete / Backspace<br/>` +
       `撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y<br/>` +
-      `平移：中键拖拽 / Alt+拖拽 / 抓手<br/>` +
+      `平移：中键拖拽 / Alt+拖拽 / 抓手 / 右键双击<br/>` +
       `缩放：滚轮 · 保存：Ctrl/⌘ + S`;
   } else if (editor.mode === "flowchart") {
     el.innerHTML =
@@ -1488,7 +1574,7 @@ function updateHelpKeys() {
       `连线：拖节点上下端口到目标节点<br/>` +
       `删除：Delete / Backspace<br/>` +
       `撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y<br/>` +
-      `平移：中键拖拽 / Alt+拖拽 · 缩放：滚轮<br/>` +
+      `平移：中键拖拽 / Alt+拖拽 / 右键双击抓手 · 缩放：滚轮<br/>` +
       `保存：Ctrl/⌘ + S`;
   } else {
     el.innerHTML =
@@ -1498,7 +1584,7 @@ function updateHelpKeys() {
       `选中节点：左侧面板改样式（颜色/字号/加粗/形状）<br/>` +
       `删除：Delete / Backspace<br/>` +
       `撤销：Ctrl/⌘ + Z · 重做：Ctrl+Y / ⌘+Shift+Z<br/>` +
-      `平移：抓手 H / 中键拖拽 / Alt+拖拽 · 缩放：滚轮<br/>` +
+      `平移：抓手 H / 中键拖拽 / Alt+拖拽 / 右键双击 · 缩放：滚轮<br/>` +
       `保存：Ctrl/⌘ + S`;
   }
 }
@@ -1533,7 +1619,8 @@ const SHORTCUTS = {
   },
   mindmap: {
     工具: [
-      ["加子节点", ["Tab"]], ["加同级节点", ["Enter"]], ["关联线", ["L"]], ["抓手 / 平移", ["H"]],
+      ["加子节点", ["Tab"]], ["加同级节点", ["Enter"]], ["关联线", ["L"]], ["抓手 / 平移", ["H", "或", "右键双击"]],
+      ["箭头选择", ["V"]],
       ["概括 / 外框", ["选中节点", "点顶部工具栏"]],
       ["图片 / 图标", ["选中节点", "点顶部工具栏"]], ["超链接 / 备注", ["选中节点", "点顶部工具栏"]],
     ],
@@ -1663,7 +1750,6 @@ function wireChrome() {
   document.getElementById("zoomOut").addEventListener("click", () => { const r = editor.rect(); editor.zoomAt(1 / 1.2, r.left + r.width / 2, r.top + r.height / 2); });
   document.getElementById("zoomFit").addEventListener("click", () => editor.fitView());
   document.getElementById("layoutBtn").addEventListener("click", () => { layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); });
-  buildLayouts();
   document.getElementById("outlineBtn").addEventListener("click", () => import("./outline.js").then((m) => m.openOutline(editor)));
   document.getElementById("delBtn").addEventListener("click", () => editor.deleteSelection());
   // 顶部「思维导图 / 流程图 / 白板」仅作为当前模式指示，不可点击切换（类型在建图时确定）
@@ -1746,14 +1832,11 @@ function wireKeys() {
       return;
     }
     if (e.key === "Enter" && editor.mode === "mindmap") { e.preventDefault(); const sel = [...editor.selection][0]; if (sel) editor.addMindmapSibling(sel); return; }
-    // 脑图关联线工具快捷键 L / 抓手工具快捷键 H
-    if ((e.key === "l" || e.key === "L") && editor.mode === "mindmap" && !e.ctrlKey && !e.metaKey) {
-      editor.setTool(editor.tool === "link" ? "select" : "link");
-      refreshFcActive();
-      return;
-    }
-    if ((e.key === "h" || e.key === "H") && editor.mode === "mindmap" && !e.ctrlKey && !e.metaKey) {
-      editor.setTool(editor.tool === "hand" ? "select" : "hand");
+    // 脑图快捷键：V 箭头选择 / L 关联线 / H 抓手
+    if (editor.mode === "mindmap" && !e.ctrlKey && !e.metaKey && ["v", "l", "h"].includes(e.key.toLowerCase())) {
+      const key = e.key.toLowerCase();
+      const tool = key === "v" ? "select" : key === "l" ? "link" : "hand";
+      editor.setTool(editor.tool === tool ? "select" : tool);
       refreshFcActive();
       return;
     }
@@ -1814,10 +1897,15 @@ function wireKeys() {
   document.getElementById("titleInput").value = map.title || "未命名导图";
   document.getElementById("shareBtn").textContent = map.is_public ? "已分享" : "分享";
 
-  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshFcActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), mode: map.type || "mindmap", onNoteBadge: (id) => { const n = editor.nodeById(id); if (n) openNoteModal(n); }, onEdgeEdit: (eid, childId) => openEdgeModal(eid, childId), onGroupEdit: (gid) => openGroupModal(gid), onImageZoom: openImageLightbox, onConfirmImageDelete: () => confirmDialog({ title: "删除含图片的节点", message: "该节点包含图片，确定要删除吗？此操作不可撤销。", okText: "删除", danger: true }) });
+  let minimapRefresh = () => {}; // 小地图刷新（首次渲染前为空实现）
+  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshFcActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), onRender: () => minimapRefresh(), mode: map.type || "mindmap", onNoteBadge: (id) => { const n = editor.nodeById(id); if (n) openNoteModal(n); }, onEdgeEdit: (eid, childId) => openEdgeModal(eid, childId), onGroupEdit: (gid) => openGroupModal(gid), onImageZoom: openImageLightbox, onConfirmImageDelete: () => confirmDialog({ title: "删除含图片的节点", message: "该节点包含图片，确定要删除吗？此操作不可撤销。", okText: "删除", danger: true }) });
   window.__gmEditor = editor; // 测试钩子：headless 验证用
+  const minimap = initMinimap(editor); // 小地图（右下角缩略导航）
+  minimapRefresh = minimap.refresh;
   wireContextMenus();
   editor.load(map.data);
+  // 恢复文档持久化的主题（加载时静默应用，不进撤销栈）
+  if (editor.doc.theme && THEMES[editor.doc.theme]) applyTheme(editor.doc.theme, { silent: true });
   // 数据已加载并渲染完成，隐藏首屏 loading 遮罩
   const gmLoadingEl = document.getElementById("gmLoading");
   if (gmLoadingEl) gmLoadingEl.classList.add("gm-loading-hidden");
@@ -1828,7 +1916,6 @@ function wireKeys() {
   if (editor.mode === "mindmap") ensureRoot();
 
   buildToolbar();
-  buildThemes();
   wireChrome();
   wireExport();
   wireKeys();
