@@ -641,7 +641,7 @@ function buildFcBar(bar) {
   bar.classList.add("gm-fc-bar");
   let lastGroup = null;
   for (const t of FC_TOOLS) {
-    const group = t.act.startsWith("shape:") ? 2 : t.act === "undo" || t.act === "redo" ? 1 : 3;
+    const group = t.act.startsWith("shape:") ? 2 : t.act === "select" || t.act === "hand" ? 1 : 3;
     if (lastGroup !== null && group !== lastGroup) bar.appendChild(wbSep());
     lastGroup = group;
     const b = document.createElement("button");
@@ -655,9 +655,8 @@ function buildFcBar(bar) {
   refreshFcActive();
 }
 function onFcAction(act) {
-  if (act === "undo") { editor.undo(); return; }
-  if (act === "redo") { editor.redo(); return; }
   if (act === "select") { editor.setTool("select"); refreshFcActive(); return; }
+  if (act === "hand") { editor.setTool(editor.tool === "hand" ? "select" : "hand"); refreshFcActive(); return; }
   if (act === "delete") { editor.deleteSelection(); return; }
   if (act === "image") { document.getElementById("wbImageFile").click(); return; }
   if (act === "link") {
@@ -667,18 +666,21 @@ function onFcAction(act) {
     return;
   }
   if (act.startsWith("shape:")) {
-    const c = editor.viewCenterWorld();
-    editor.addFlowShape(act.slice(6), c.x, c.y);
-    editor.setTool("select");
+    // 形状工具：激活后需在画布上点击才于点击处创建组件（再点一次同工具取消）
+    const tool = act.slice(6);
+    editor.setTool(editor.tool === tool ? "select" : tool);
     refreshFcActive();
+    if (editor.tool === tool) toast("已选择工具，点击画布处创建组件", "info");
   }
 }
 function refreshFcActive() {
   document.querySelectorAll("#wbBar .gm-fc-btn").forEach((b) => {
-    const isSelect = b.dataset.act === "select" && editor.tool === "select";
-    const isLink = b.dataset.act === "link" && editor.tool === "link";
-    const isHand = b.dataset.act === "hand" && editor.tool === "hand";
-    b.classList.toggle("active", isSelect || isLink || isHand);
+    const act = b.dataset.act;
+    const isShape = act.startsWith("shape:") && editor.tool === act.slice(6);
+    const isSelect = act === "select" && editor.tool === "select";
+    const isLink = act === "link" && editor.tool === "link";
+    const isHand = act === "hand" && editor.tool === "hand";
+    b.classList.toggle("active", isSelect || isLink || isHand || isShape);
   });
 }
 
@@ -765,13 +767,24 @@ function renderEdgeStylePanel(panel, eid) {
     strokeWidth: e.strokeWidth || 2,
     strokeStyle: e.strokeStyle || (e.assoc ? "dashed" : "solid"),
   };
+  // 箭头模式（无 / 左箭头 / 右箭头 / 双向）：流程线默认右箭头，其余默认无
+  const curArrow = e.arrowMode || (e.arrow === false ? "none" : (e.assoc || e.derived ? "none" : "end"));
   const cols = ["#94a3b8", "#11b5a4", "#ff9f43", "#ef4444", "#3b82f6", "#8b5cf6", "#1f2a37"];
   const colBtn = (c) => `<button class="gm-ws-swatch${c === cur.stroke ? " active" : ""}" data-ek="stroke" data-ev="${c}" title="${c}" style="background:${c}"></button>`;
   const wBtn = (v) => `<button class="gm-ws-seg${cur.strokeWidth === v ? " active" : ""}" data-ek="strokeWidth" data-ev="${v}" title="${v === 2 ? "细" : v === 4 ? "中" : "粗"}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="${v}"/></svg></button>`;
   const sBtn = (v, t, dash) => `<button class="gm-ws-seg${cur.strokeStyle === v ? " active" : ""}" data-ek="strokeStyle" data-ev="${v}" title="${t}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="2"${dash}/></svg></button>`;
+  const aBtn = (v, t, svg) => `<button class="gm-ws-seg${curArrow === v ? " active" : ""}" data-ek="arrowMode" data-ev="${v}" title="${t}">${svg}</button>`;
+  const AR = 'stroke="#1f2a37" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"';
   panel.innerHTML =
     `<div class="gm-ws-t">连线样式</div>` +
     `<div class="gm-ws-row">${cols.map(colBtn).join("")}</div>` +
+    `<div class="gm-ws-t">箭头</div>` +
+    `<div class="gm-ws-row seg">` +
+      aBtn("none", "无箭头", `<svg width="24" height="12"><line x1="3" y1="6" x2="21" y2="6" ${AR}/></svg>`) +
+      aBtn("start", "左箭头", `<svg width="24" height="12"><line x1="7" y1="6" x2="21" y2="6" ${AR}/><path d="M7,2 L3,6 L7,10" ${AR}/></svg>`) +
+      aBtn("end", "右箭头", `<svg width="24" height="12"><line x1="3" y1="6" x2="17" y2="6" ${AR}/><path d="M17,2 L21,6 L17,10" ${AR}/></svg>`) +
+      aBtn("both", "双向箭头", `<svg width="24" height="12"><line x1="7" y1="6" x2="17" y2="6" ${AR}/><path d="M7,2 L3,6 L7,10 M17,2 L21,6 L17,10" ${AR}/></svg>`) +
+    `</div>` +
     `<div class="gm-ws-t">线宽</div>` +
     `<div class="gm-ws-row seg">${wBtn(2) + wBtn(4) + wBtn(6)}</div>` +
     `<div class="gm-ws-t">线型</div>` +
@@ -795,12 +808,56 @@ function renderEdgeStylePanel(panel, eid) {
     });
   });
 }
+
+// 脑图父子连线（派生线，id 形如 "p-<子节点id>"）样式面板：
+// 颜色 / 线宽 / 线型 写入子节点；弯曲写 edgeBend；文字用连线编辑弹框
+function renderDerivedEdgePanel(panel, childId) {
+  const n = editor.nodeById(childId);
+  if (!n || !n.parentId) { panel.hidden = true; return; }
+  panel.hidden = false;
+  const cur = {
+    stroke: n.stroke || "#11b5a4",
+    strokeWidth: n.strokeWidth || 2,
+    strokeStyle: n.strokeStyle || "solid",
+  };
+  const cols = ["#94a3b8", "#11b5a4", "#ff9f43", "#ef4444", "#3b82f6", "#8b5cf6", "#1f2a37"];
+  const colBtn = (c) => `<button class="gm-ws-swatch${c === cur.stroke ? " active" : ""}" data-ek="stroke" data-ev="${c}" title="${c}" style="background:${c}"></button>`;
+  const wBtn = (v) => `<button class="gm-ws-seg${cur.strokeWidth === v ? " active" : ""}" data-ek="strokeWidth" data-ev="${v}" title="${v === 2 ? "细" : v === 4 ? "中" : "粗"}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="${v}"/></svg></button>`;
+  const sBtn = (v, t, dash) => `<button class="gm-ws-seg${cur.strokeStyle === v ? " active" : ""}" data-ek="strokeStyle" data-ev="${v}" title="${t}"><svg width="22" height="10"><line x1="2" y1="5" x2="20" y2="5" stroke="#1f2a37" stroke-width="2"${dash}/></svg></button>`;
+  panel.innerHTML =
+    `<div class="gm-ws-t">连线样式</div>` +
+    `<div class="gm-ws-row">${cols.map(colBtn).join("")}</div>` +
+    `<div class="gm-ws-t">线宽</div>` +
+    `<div class="gm-ws-row seg">${wBtn(2) + wBtn(4) + wBtn(6)}</div>` +
+    `<div class="gm-ws-t">线型</div>` +
+    `<div class="gm-ws-row seg">${sBtn("solid", "实线", "") + sBtn("dashed", "虚线", ' stroke-dasharray="5 3"') + sBtn("dotted", "点线", ' stroke-dasharray="0.5 3.5" stroke-linecap="round"')}</div>` +
+    `<div class="gm-ws-t">形状</div>` +
+    `<div class="gm-ws-row seg">` +
+      `<button class="gm-ws-seg" data-ek="bend" data-ev="curve" title="恢复曲线">⌒</button>` +
+      `<button class="gm-ws-seg" data-ek="bend" data-ev="straight" title="拉直">—</button>` +
+    `</div>` +
+    `<div class="gm-ws-row"><button class="gm-ws-seg" data-ek="label" data-ev="edit" title="编辑文字">编辑文字</button></div>`;
+  panel.querySelectorAll("[data-ek]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const k = b.dataset.ek, v = b.dataset.ev;
+      if (k === "strokeWidth") editor.setNodeStyle({ strokeWidth: Number(v) });
+      else if (k === "bend") editor.setDerivedEdgeBend(childId, v);
+      else if (k === "label") { openEdgeModal(null, childId); return; }
+      else editor.setNodeStyle({ [k]: v });
+      refreshWbStylePanel();
+    });
+  });
+}
 function refreshWbStylePanel() {
   const panel = document.getElementById("wbStylePanel");
   if (!panel || !editor) { if (panel) panel.hidden = true; return; }
   // 选中连线时优先显示连线样式面板（关联线 / 流程线 / 脑图连线均可调）
   const eid = editor._selEdgeId && editor._selEdgeId();
-  if (eid) { renderEdgeStylePanel(panel, eid); return; }
+  if (eid) {
+    if (eid.startsWith("p-")) renderDerivedEdgePanel(panel, eid.slice(2));
+    else renderEdgeStylePanel(panel, eid);
+    return;
+  }
   // 脑图模式：选中节点时显示节点样式面板
   if (editor.mode === "mindmap") { renderMmNodePanel(panel); return; }
   if (editor.mode !== "whiteboard") { panel.hidden = true; return; }
@@ -1584,7 +1641,7 @@ function wireChrome() {
   buildLayouts();
   document.getElementById("outlineBtn").addEventListener("click", () => import("./outline.js").then((m) => m.openOutline(editor)));
   document.getElementById("delBtn").addEventListener("click", () => editor.deleteSelection());
-  document.querySelectorAll("#modes button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+  // 顶部「思维导图 / 流程图 / 白板」仅作为当前模式指示，不可点击切换（类型在建图时确定）
   // 白板插入图片：本地图片转 dataURL 后放进画布中心
   document.getElementById("wbImageFile").addEventListener("change", (e) => {
     const f = e.target.files[0];
@@ -1675,9 +1732,9 @@ function wireKeys() {
       refreshFcActive();
       return;
     }
-    // 流程图工具快捷键（V 选择 / 1-6 图形 / 7 图片 / L 关联线）
+    // 流程图工具快捷键（V 选择 / H 抓手 / 1-6 图形 / 7 图片 / L 关联线）
     if (editor.mode === "flowchart") {
-      const fcKeys = { v: "select", "1": "shape:rect", "2": "shape:rounded", "3": "shape:diamond", "4": "shape:ellipse", "5": "shape:parallelogram", "6": "shape:text", "7": "image", l: "link" };
+      const fcKeys = { v: "select", h: "hand", "1": "shape:rect", "2": "shape:rounded", "3": "shape:diamond", "4": "shape:ellipse", "5": "shape:parallelogram", "6": "shape:text", "7": "image", l: "link" };
       const act = fcKeys[e.key.toLowerCase()];
       if (act) { e.preventDefault(); onFcAction(act); return; }
     }
@@ -1732,7 +1789,7 @@ function wireKeys() {
   document.getElementById("titleInput").value = map.title || "未命名导图";
   document.getElementById("shareBtn").textContent = map.is_public ? "已分享" : "分享";
 
-  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), mode: map.type || "mindmap", onNoteBadge: (id) => { const n = editor.nodeById(id); if (n) openNoteModal(n); }, onEdgeEdit: (eid, childId) => openEdgeModal(eid, childId), onGroupEdit: (gid) => openGroupModal(gid), onImageZoom: openImageLightbox, onConfirmImageDelete: () => confirmDialog({ title: "删除含图片的节点", message: "该节点包含图片，确定要删除吗？此操作不可撤销。", okText: "删除", danger: true }) });
+  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshFcActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), mode: map.type || "mindmap", onNoteBadge: (id) => { const n = editor.nodeById(id); if (n) openNoteModal(n); }, onEdgeEdit: (eid, childId) => openEdgeModal(eid, childId), onGroupEdit: (gid) => openGroupModal(gid), onImageZoom: openImageLightbox, onConfirmImageDelete: () => confirmDialog({ title: "删除含图片的节点", message: "该节点包含图片，确定要删除吗？此操作不可撤销。", okText: "删除", danger: true }) });
   window.__gmEditor = editor; // 测试钩子：headless 验证用
   wireContextMenus();
   editor.load(map.data);
