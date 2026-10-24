@@ -745,11 +745,16 @@ export class Editor {
       const side = (sa2 && sb2) ? this._mmSide(a, sa2, b, sb2) : "right";
       // list 目录组织 / elbow 直角导图：直角折线连线
       const isElbow = this.doc.layout === "list" || this.doc.layout === "elbow";
-      if (side === "down" || side === "up" || isElbow) {
+      if (isElbow) {
+        // 统一从父节点侧边中点接出，并在固定偏移处共用一条「主干」，避免各子节点岔出多条竖线
+        const G = 20;
+        if (side === "down") d = `M ${ax},${ay} V ${ay + G} H ${bx} V ${by}`;
+        else if (side === "up") d = `M ${ax},${ay} V ${ay - G} H ${bx} V ${by}`;
+        else if (side === "left") d = `M ${ax},${ay} H ${ax - G} V ${by} H ${bx}`;
+        else d = `M ${ax},${ay} H ${ax + G} V ${by} H ${bx}`;
+      } else if (side === "down" || side === "up") {
         const my = (ay + by) / 2;
-        d = isElbow
-          ? `M ${ax},${ay} H ${(ax + bx) / 2} V ${by} H ${bx}`
-          : `M ${ax},${ay} C ${ax},${my} ${bx},${my} ${bx},${by}`;
+        d = `M ${ax},${ay} C ${ax},${my} ${bx},${my} ${bx},${by}`;
       } else {
         const dx = bx - ax;
         d = `M ${ax},${ay} C ${ax + dx * 0.5},${ay} ${bx - dx * 0.5},${by} ${bx},${by}`;
@@ -784,14 +789,28 @@ export class Editor {
     const { ax, ay, bx, by } = ends;
     const { c1, c2 } = this._edgeCtrl(e, ends);
     const lead = (x1, y1, x2, y2) => `<line class="gm-edge-lead" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#11b5a4" stroke-width="1.3" stroke-opacity="0.7" pointer-events="none"/>`;
-    const H = (hx, hy, kind, title) =>
+    // 拉杆柄：空心小圆（调弧度）
+    const LEV = (hx, hy, kind, title) =>
       `<circle class="gm-edge-handle" data-edge="${eid}" data-h="${kind}" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="5.5" fill="#fff" stroke="#11b5a4" stroke-width="1.8"><title>${title}</title></circle>` +
-      // 透明放大命中区：小圆柄更好抓（视觉不变）
       `<circle class="gm-edge-handle-hit" data-edge="${eid}" data-h="${kind}" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="12" fill="transparent" stroke="none" pointer-events="all"/>`;
-    const TIP0 = "起点拉杆：拖动拉伸调节弧度；拖到其它节点上松手可重新吸附";
-    const TIP1 = "终点拉杆：拖动拉伸调节弧度；拖到其它节点上松手可重新吸附";
-    return lead(ax, ay, c1.x, c1.y) + lead(bx, by, c2.x, c2.y) +
-      H(c1.x, c1.y, "p0", TIP0) + H(c2.x, c2.y, "p1", TIP1);
+    // 位置柄：实心小圆（拖端点 / 中点）
+    const POS = (hx, hy, kind, title) =>
+      `<circle class="gm-edge-handle" data-edge="${eid}" data-h="${kind}" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="5" fill="#11b5a4" stroke="#fff" stroke-width="1.6"><title>${title}</title></circle>` +
+      `<circle class="gm-edge-handle-hit" data-edge="${eid}" data-h="${kind}" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="11" fill="transparent" stroke="none" pointer-events="all"/>`;
+    const TIP_L0 = "起点拉杆：拖动伸缩调节弧度；拖到其它节点上松手可重新吸附";
+    const TIP_L1 = "终点拉杆：拖动伸缩调节弧度；拖到其它节点上松手可重新吸附";
+    let out = lead(ax, ay, c1.x, c1.y) + lead(bx, by, c2.x, c2.y) +
+      LEV(c1.x, c1.y, "levA", TIP_L0) + LEV(c2.x, c2.y, "levB", TIP_L1);
+    // 关联线额外保留原来的 3 个位置调节点：起点 / 中点（弯曲）/ 终点
+    if (e.assoc) {
+      const mc = e.bend && (e.bend.x || e.bend.y)
+        ? this._quadMid(ax, ay, bx, by, e.bend)
+        : { x: 0.125 * ax + 0.375 * c1.x + 0.375 * c2.x + 0.125 * bx, y: 0.125 * ay + 0.375 * c1.y + 0.375 * c2.y + 0.125 * by };
+      out += POS(ax, ay, "p0", "起点：拖动可移动 / 吸附到其它节点，拖到空白处固定")
+        + POS(mc.x, mc.y, "mid", "中点：拖动调节弯曲")
+        + POS(bx, by, "p1", "终点：拖动可移动 / 吸附到其它节点，拖到空白处固定");
+    }
+    return out;
   }
 
   // 连线样式：批量应用到选中的连线（stroke/strokeWidth/strokeStyle）；bend: null 移除 / "straight" 拉直
@@ -1097,17 +1116,20 @@ export class Editor {
     const edgeHandleEl = target.closest && target.closest(".gm-edge-handle, .gm-edge-handle-hit");
     if (edgeHandleEl) {
       const eid0 = edgeHandleEl.getAttribute("data-edge");
-      const kind0 = edgeHandleEl.getAttribute("data-h") || "p0";
+      const kind0 = edgeHandleEl.getAttribute("data-h") || "levA";
       this._edgeDrag = { id: eid0, kind: kind0, moved: false, snapTo: null, off: null };
-      if (kind0 === "p0" || kind0 === "p1") {
-        const e0 = this.edgeById(eid0);
-        if (e0) {
-          // 拉杆圆柄位置 = 贝塞尔控制点；记录「光标 - 控制点」偏移，拖动时手感连续不跳
-          const ends0 = this._edgeEnds(e0);
+      const e0 = this.edgeById(eid0);
+      if (e0) {
+        const ends0 = this._edgeEnds(e0);
+        const w0 = this.toWorld(e.clientX, e.clientY);
+        if (kind0 === "levA" || kind0 === "levB") {
+          // 拉杆柄：记录「光标 - 控制点」偏移，拖动时手感连续不跳
           const { c1, c2 } = this._edgeCtrl(e0, ends0);
-          const w0 = this.toWorld(e.clientX, e.clientY);
-          const c = kind0 === "p0" ? c1 : c2;
+          const c = kind0 === "levA" ? c1 : c2;
           this._edgeDrag.off = { x: w0.x - c.x, y: w0.y - c.y };
+        } else if (kind0 === "p0" || kind0 === "p1") {
+          const ap = kind0 === "p0" ? { x: ends0.ax, y: ends0.ay } : { x: ends0.bx, y: ends0.by };
+          this._edgeDrag.off = { x: w0.x - ap.x, y: w0.y - ap.y };
         }
       }
       return;
@@ -1305,23 +1327,48 @@ export class Editor {
       if (hid !== this._linkHover) { this._linkHover = hid; this.render(); }
       return;
     }
-    // 连线拉杆拖拽：拖动圆柄 = 拉伸/收缩拉杆调节弧度（写入 aLev / bLev）；
-    // 松手时若圆柄落在其它节点上，则把该端点重新吸附到那个节点（见 onUp）
+    // 连线调节柄拖拽：
+    //  · levA / levB（空心圆）= 拉杆，拖动伸缩调节弧度（写入 aLev / bLev）；
+    //  · p0 / p1（实心圆）= 移动端点（可吸附到其它节点），mid（实心圆）= 调节弯曲
+    // 松手时若拉杆落在其它节点上，则把该端点重新吸附到那个节点（见 onUp）
     if (this._edgeDrag) {
       const dId = this._edgeDrag.id;
       const ed = this.edgeById(dId);
       const off = this._edgeDrag.off || { x: 0, y: 0 };
+      const kind = this._edgeDrag.kind;
       if (ed) {
         const ends = this._edgeEnds(ed);
         const wc = this.toWorld(e.clientX, e.clientY);
-        const ctrl = { x: wc.x - off.x, y: wc.y - off.y }; // 目标控制点位置
-        const isP0 = this._edgeDrag.kind === "p0";
-        const ap = isP0 ? { x: ends.ax, y: ends.ay } : { x: ends.bx, y: ends.by };
-        const lev = { x: ctrl.x - ap.x, y: ctrl.y - ap.y };
-        if (isP0) ed.aLev = lev; else ed.bLev = lev;
-        const other = isP0 ? ed.to : ed.from;
-        const snapId = this.snapNodeAt(e.clientX, e.clientY);
-        this._edgeDrag.snapTo = snapId && snapId !== other ? snapId : null;
+        const pos = { x: wc.x - off.x, y: wc.y - off.y };
+        if (kind === "levA" || kind === "levB") {
+          const isA = kind === "levA";
+          const ap = isA ? { x: ends.ax, y: ends.ay } : { x: ends.bx, y: ends.by };
+          const lev = { x: pos.x - ap.x, y: pos.y - ap.y };
+          if (isA) ed.aLev = lev; else ed.bLev = lev;
+          const other = isA ? ed.to : ed.from;
+          const snapId = this.snapNodeAt(e.clientX, e.clientY);
+          this._edgeDrag.snapTo = snapId && snapId !== other ? snapId : null;
+        } else if (kind === "mid") {
+          // 中点柄：反解二次贝塞尔控制点 C = 2M - (P0+P1)/2；同时清掉拉杆弧度，避免两套参数打架
+          ed.bend = { x: 2 * pos.x - (ends.ax + ends.bx) / 2, y: 2 * pos.y - (ends.ay + ends.by) / 2 };
+          delete ed.aLev; delete ed.bLev;
+          this._edgeDrag.snapTo = null;
+        } else {
+          // p0 / p1：移动端点（吸附到附近节点边框）
+          const isP0 = kind === "p0";
+          const other = isP0 ? ed.to : ed.from;
+          let pt = { x: pos.x, y: pos.y };
+          const snapId = this.snapNodeAt(e.clientX, e.clientY);
+          if (snapId && snapId !== other) {
+            const sn = this.nodeById(snapId), ss = this.sizes.get(snapId);
+            if (sn && ss) {
+              const scx = sn.x + ss.w / 2, scy = sn.y + ss.h / 2;
+              pt = this._rectEdgePoint(ss.w, ss.h, scx, scy, wc.x, wc.y);
+            }
+          }
+          if (isP0) { ed.aPt = pt; delete ed.aPtRel; } else { ed.bPt = pt; delete ed.bPtRel; }
+          this._edgeDrag.snapTo = snapId && snapId !== other ? snapId : null;
+        }
         this._edgeDrag.moved = true;
         this.render();
       }
@@ -1457,23 +1504,55 @@ export class Editor {
       this._edgeDrag = null;
       if (d.moved) {
         const ed = this.edgeById(d.id);
-        if (ed && (d.kind === "p0" || d.kind === "p1")) {
-          // 拉杆拖拽收尾：
-          // 圆柄落在第三方节点上 -> 该端点重新吸附到那个节点（清掉该侧拉杆，恢复默认曲线）
-          // 圆柄落在对端节点上（无效）-> 保持拉杆，不做重绑
-          // 圆柄落在空白处 -> 保留拉杆弧度（这就是伸缩调节弧度的结果）
-          const isP0 = d.kind === "p0";
-          const otherRef = isP0 ? ed.to : ed.from;   // 对端节点
-          const origRef = isP0 ? ed.from : ed.to;    // 端点原本挂着的节点
-          const clearLev = () => { if (isP0) { delete ed.aLev; delete ed.aPt; delete ed.aPtRel; } else { delete ed.bLev; delete ed.bPt; delete ed.bPtRel; } };
+        const isLev = d.kind === "levA" || d.kind === "levB";
+        const isPos = d.kind === "p0" || d.kind === "p1";
+        if (ed && isLev) {
+          // 拉杆收尾：落在第三方节点上 -> 该端点重新吸附到那个节点并复位该侧拉杆；
+          // 落在空白 / 原节点 -> 保留弧度
+          const isA = d.kind === "levA";
+          const otherRef = isA ? ed.to : ed.from;
+          const origRef = isA ? ed.from : ed.to;
+          const clearLev = () => { if (isA) { delete ed.aLev; delete ed.aPt; delete ed.aPtRel; } else { delete ed.bLev; delete ed.bPt; delete ed.bPtRel; } };
           if (d.snapTo && d.snapTo !== otherRef && d.snapTo !== origRef) {
-            const dup = this.doc.edges.some((x) => x !== ed && x.assoc && x.from === (isP0 ? d.snapTo : ed.from) && x.to === (isP0 ? ed.to : d.snapTo));
+            const dup = this.doc.edges.some((x) => x !== ed && x.assoc && x.from === (isA ? d.snapTo : ed.from) && x.to === (isA ? ed.to : d.snapTo));
             if (!dup) {
-              if (isP0) { ed.from = d.snapTo; delete ed.fromPort; } else { ed.to = d.snapTo; delete ed.toPort; }
-              clearLev(); // 端点回到新节点边框，该侧拉杆复位
-            } else {
-              clearLev(); // 已存在重复关联线：不重绑，只把拉杆复位
+              if (isA) { ed.from = d.snapTo; delete ed.fromPort; } else { ed.to = d.snapTo; delete ed.toPort; }
             }
+            clearLev();
+          }
+        } else if (ed && isPos) {
+          // 端点位置柄收尾（关联线原有的 3 点调节之一）：
+          // 吸附到第三方节点 -> 重绑 from/to；吸附回原节点 -> 保留边框相对锚点；落空白 -> 固定端点
+          const isP0 = d.kind === "p0";
+          const otherRef = isP0 ? ed.to : ed.from;
+          const origRef = isP0 ? ed.from : ed.to;
+          const dropPt = isP0 ? ed.aPt : ed.bPt;
+          const anchorRel = (nid) => {
+            const nn = this.nodeById(nid);
+            if (!nn || !dropPt) return false;
+            const rel = { dx: dropPt.x - nn.x, dy: dropPt.y - nn.y };
+            if (isP0) { ed.aPtRel = rel; delete ed.aPt; } else { ed.bPtRel = rel; delete ed.bPt; }
+            return true;
+          };
+          const resetAuto = () => {
+            if (isP0) { delete ed.aPt; delete ed.aPtRel; } else { delete ed.bPt; delete ed.bPtRel; }
+          };
+          if (d.snapTo && d.snapTo !== otherRef) {
+            if (d.snapTo === origRef) {
+              anchorRel(origRef); // 同节点上换个接出位置
+            } else {
+              const dup = this.doc.edges.some((x) => x !== ed && x.assoc && x.from === (isP0 ? d.snapTo : ed.from) && x.to === (isP0 ? ed.to : d.snapTo));
+              if (!dup) {
+                if (isP0) { ed.from = d.snapTo; delete ed.fromPort; } else { ed.to = d.snapTo; delete ed.toPort; }
+                anchorRel(d.snapTo);
+              } else {
+                resetAuto();
+              }
+            }
+          } else if (d.snapTo === otherRef) {
+            resetAuto(); // 吸附到对端节点无效，回退自动吸附
+          } else if (!d.snapTo) {
+            if (isP0) delete ed.aPtRel; else delete ed.bPtRel; // 落空白：保留世界坐标固定端点
           }
         }
         this.render(); this.onChange(); this.pushHistory();
