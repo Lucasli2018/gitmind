@@ -87,7 +87,7 @@ export class Editor {
       if (!inCanvas) return;
       const now = Date.now();
       const near = this._rmbLastXY && Math.hypot(e.clientX - this._rmbLastXY.x, e.clientY - this._rmbLastXY.y) < 15;
-      if (now - this._rmbLastDown < 350 && near) {
+      if (now - this._rmbLastDown < 500 && near) {
         this._rmbLastDown = 0;
         this._rmbLastXY = null;
         this._rmbDblAt = now;
@@ -157,7 +157,11 @@ export class Editor {
     this.view = this.doc.view;
     this.mode = this.doc.type || "mindmap";
     this.selection.clear();
-    if (this.mode === "mindmap") layoutMindmap(this.doc);
+    // 加载时不再自动重排：保留文档里已保存的节点位置（用户手动拖动过的布局原样还原），
+    // 只有主动点「整理布局」才重排。首次进入的空脑图由 ensureRoot 布局。
+    if (this.mode === "mindmap" && !this.doc.nodes.some((n) => Number.isFinite(n.x) && Number.isFinite(n.y) && (n.x || n.y))) {
+      layoutMindmap(this.doc);
+    }
     this.render();
     this.fitView(true);
     this._initHistory();
@@ -220,7 +224,7 @@ export class Editor {
     this.doc.groups = s.groups || [];
     this.mode = this.doc.type;
     this.selection.clear();
-    if (this.doc.type === "mindmap") layoutMindmap(this.doc);
+    // 撤销/重做按快照还原（含节点坐标），不重排，避免拖动位置被布局覆盖
     this.render();
     this._restoring = false;
     this._notifyUndoRedo();
@@ -251,12 +255,12 @@ export class Editor {
     if (this.showGrid && !this._forExport) html += this.gridHTML();
     // 折叠隐藏的节点集合（脑图）：用于跳过隐藏节点及其连线 / 外框 / 概括
     const hidden = this.hiddenNodes();
-    // 脑图：外框 / 概括（分组框选多个子节点），垫在连线之下；成员全部隐藏（收起）时不展示
+    // 脑图：外框 / 概括（分组框选多个子节点），垫在连线之下
+    // 范围只按「当前可见成员」计算：成员被子树收起时不出框，全部隐藏则不展示
     if (this.doc.type === "mindmap" && this.doc.groups && this.doc.groups.length) {
       for (const g of this.doc.groups) {
-        const members = g.ids.map((id) => this.nodeById(id)).filter(Boolean);
+        const members = g.ids.map((id) => this.nodeById(id)).filter((n) => n && !hidden.has(n.id));
         if (!members.length) continue;
-        if (members.every((n) => hidden.has(n.id))) continue; // 收起时不展示
         const gsel = this.selection.has("g:" + g.id);
         html += g.kind === "frame" ? this.frameHTML(members, g, gsel) : this.summaryHTML(members, g, gsel);
       }
@@ -1447,12 +1451,11 @@ export class Editor {
     this.svg.classList.remove("panning");
   }
 
-  // 切换节点折叠状态（脑图）：重排布局后渲染
+  // 切换节点折叠状态（脑图）：只切换显隐，不重排布局（保留用户拖动的位置）
   toggleCollapse(id) {
     const n = this.nodeById(id);
     if (!n || !this.doc.nodes.some((c) => c.parentId === n.id)) return;
     n.collapsed = !n.collapsed;
-    if (this.doc.type === "mindmap") layoutMindmap(this.doc);
     this.render(); this.onChange(); this.pushHistory();
   }
 
@@ -1645,7 +1648,7 @@ export class Editor {
       if (patch[k] === null) delete n[k];
       else n[k] = patch[k];
     }
-    if (this.doc.type === "mindmap") layoutMindmap(this.doc);
+    // 只改属性不重排（备注/超链接等不影响结构），保留拖动位置
     this.render(); this.onChange(); this.pushHistory();
   }
 
@@ -1674,26 +1677,52 @@ export class Editor {
     this.render(); this.onChange(); this.pushHistory();
   }
 
+  // 新增子节点：就地放在父节点侧边（不重排整图，保留用户拖动位置）
   addMindmapChild(parentId) {
     const parent = this.nodeById(parentId); if (!parent) return null;
     if (parent.collapsed) parent.collapsed = false; // 折叠节点先展开再添加子节点
     const id = newId();
-    const node = { id, x: parent.x + 200, y: parent.y, w: 124, h: 44, text: "新节点", shape: "rounded", color: "#fff", textColor: "#1f2a37", stroke: parent.stroke || "#11b5a4", fontSize: 15, parentId, collapsed: false };
+    const ps = this.sizes.get(parent.id) || sizeOf(parent, "mindmap");
+    const H_GAP = 56, V_GAP = 14;
+    // 已有子节点：接在最后一个子节点下方；没有子节点：与父节点同高
+    const kids = this.doc.nodes.filter((n) => n.parentId === parent.id);
+    let x, y;
+    if (kids.length) {
+      const last = kids[kids.length - 1];
+      const ls = this.sizes.get(last.id) || sizeOf(last, "mindmap");
+      x = last.x; y = last.y + ls.h + V_GAP;
+    } else {
+      const side = parent.side === "left" ? "left" : "right";
+      x = side === "left" ? parent.x - 124 - H_GAP : parent.x + ps.w + H_GAP;
+      y = parent.y;
+    }
+    const node = { id, x, y, w: 124, h: 44, text: "新节点", shape: "rounded", color: "#fff", textColor: "#1f2a37", stroke: parent.stroke || "#11b5a4", fontSize: 15, parentId, collapsed: false };
     this.doc.nodes.push(node);
-    layoutMindmap(this.doc);
     this.selection = new Set([id]);
     this.render(); this.onChange();
     this.pushHistory();
     if (this.autoEditNewNode) this.beginTextEdit(id);
     return id;
   }
+  // 新增同级节点：插入到当前节点之后（顺序与位置都在旁边，不重排整图）
   addMindmapSibling(nodeId) {
     const node = this.nodeById(nodeId); if (!node || node.parentId == null) return this.addMindmapChild(nodeId);
-    const id = newId();
     const pNode = this.nodeById(node.parentId);
-    const newNode = { id, x: node.x, y: node.y + 60, w: 124, h: 44, text: "新节点", shape: "rounded", color: "#fff", textColor: "#1f2a37", stroke: pNode ? pNode.stroke : "#11b5a4", fontSize: 15, parentId: node.parentId, collapsed: false };
-    this.doc.nodes.push(newNode);
-    layoutMindmap(this.doc);
+    const id = newId();
+    const ns = this.sizes.get(node.id) || sizeOf(node, "mindmap");
+    const V_GAP = 14;
+    const newNode = { id, x: node.x, y: node.y + ns.h + V_GAP, w: 124, h: 44, text: "新节点", shape: "rounded", color: "#fff", textColor: "#1f2a37", stroke: pNode ? pNode.stroke : "#11b5a4", fontSize: 15, parentId: node.parentId, collapsed: false };
+    // 1) 插到当前节点之后：同级顺序直接决定「整理布局」时的上下次序
+    const idx = this.doc.nodes.findIndex((n) => n.id === nodeId);
+    if (idx >= 0) this.doc.nodes.splice(idx + 1, 0, newNode);
+    else this.doc.nodes.push(newNode);
+    // 2) 其后的同级节点（含子树）整体下移，给新节点腾出空间；其余节点位置不动
+    const shift = (sizeOf(newNode, "mindmap").h || 40) + V_GAP;
+    const siblings = this.doc.nodes.filter((n) => n.parentId === node.parentId);
+    const at = siblings.findIndex((n) => n.id === id);
+    const below = new Set();
+    for (const s of siblings.slice(at + 1)) { below.add(s.id); this.descendants(s.id, below); }
+    if (below.size) for (const n of this.doc.nodes) if (below.has(n.id)) n.y += shift;
     this.selection = new Set([id]);
     this.render(); this.onChange();
     this.pushHistory();
@@ -1738,7 +1767,6 @@ export class Editor {
       }
     }
     if (!changed) return;
-    if (this.mode === "mindmap") layoutMindmap(this.doc);
     this.selection.clear();
     this.render(); this.onChange();
     this.pushHistory();
@@ -1766,7 +1794,6 @@ export class Editor {
     this.doc.nodes.push(...clones);
     this.doc.edges.push(...edges);
     this.selection = new Set(clones.map((n) => n.id));
-    if (this.mode === "mindmap") layoutMindmap(this.doc);
     this.render(); this.onChange(); this.pushHistory();
   }
 
@@ -1831,7 +1858,7 @@ export class Editor {
         else n[k] = patch[k];
       }
     }
-    if (this.doc.type === "mindmap") layoutMindmap(this.doc);
+    // 改样式后不重排：节点尺寸变了也保留用户摆放的位置（需要整齐时手动点整理布局）
     this.render(); this.onChange(); this.pushHistory();
   }
 

@@ -136,8 +136,7 @@ function applyTheme(name, opts = {}) {
     for (const c of cm.get(id) || []) paint(c.id, color);
   }
   roots.forEach((r, i) => paint(r.id, pal[i % pal.length]));
-  editor.doc.theme = name; // 主题随文档持久化
-  if (editor.doc.type === "mindmap") layoutMindmap(editor.doc);
+  editor.doc.theme = name; // 主题随文档持久化（只换配色，不重排，保留拖动位置）
   editor.render(); editor.onChange();
   if (!opts.silent) editor.pushHistory();
   document.querySelectorAll("[data-theme]").forEach((el) => el.classList.toggle("active", el.dataset.theme === name));
@@ -356,7 +355,7 @@ function onMmAction(act, arg) {
   if (act === "select") { editor.setTool("select"); refreshFcActive(); return; }
   if (act === "hand") { editor.setTool(editor.tool === "hand" ? "select" : "hand"); refreshFcActive(); return; }
   if (act === "delete") { editor.deleteSelection(); return; }
-  if (act === "layout") { layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); return; }
+  if (act === "layout") { layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); editor.pushHistory(); return; }
   if (act === "child") { if (selId) editor.addMindmapChild(selId); else ensureRoot(); return; }
   if (act === "sibling") { if (!needNode()) editor.addMindmapSibling(selId); return; }
   if (act === "image") { if (!needNode()) document.getElementById("wbImageFile").click(); return; }
@@ -1327,11 +1326,11 @@ function mmHasKids(n) { return editor.doc.nodes.some((c) => c.parentId === n.id)
 function selectedNodeIds() { return [...editor.selection].filter((id) => !String(id).startsWith("e:")); }
 function mmSetAllCollapsed(collapsed) {
   for (const n of editor.doc.nodes) if (mmHasKids(n)) n.collapsed = collapsed;
-  layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); editor.pushHistory();
+  editor.render(); editor.onChange(); editor.pushHistory();
 }
 function mmCollapseToDepth(depth) {
   for (const n of editor.doc.nodes) if (mmHasKids(n)) n.collapsed = mmNodeDepth(n) >= depth;
-  layoutMindmap(editor.doc); editor.render(); editor.fitView(true); editor.onChange(); editor.pushHistory();
+  editor.render(); editor.onChange(); editor.pushHistory();
   toast(`已展开到 ${depth} 级主题`, "info");
 }
 function mmFocusRoot() {
@@ -1363,10 +1362,10 @@ function resetMmStyles() {
       if (p && p.color) n.stroke = p.color;
     }
   }
-  layoutMindmap(editor.doc); editor.render(); editor.onChange(); editor.pushHistory();
+  // 只清样式，不重排（尺寸变化后需要整齐时手动点整理布局）
+  editor.render(); editor.onChange(); editor.pushHistory();
   toast("已去除所有节点自定义样式", "success");
-}
-function copyDocJSON() {
+}function copyDocJSON() {
   navigator.clipboard.writeText(JSON.stringify(editor.doc, null, 2))
     .then(() => toast("已复制文档 JSON 到剪贴板", "info"))
     .catch(() => toast("复制失败", "error"));
