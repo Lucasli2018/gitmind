@@ -725,6 +725,122 @@ export class Editor {
     return Math.max(28, Math.min(280, w + 16));
   }
 
+  // 连线避障：其它可见节点的包围盒（排除两端节点），用于判断连线是否压住节点
+  _edgeObstacles(exA, exB, region) {
+    const hidden = this.hiddenNodes();
+    const out = [];
+    for (const n of this.doc.nodes) {
+      if (n.id === exA || n.id === exB || hidden.has(n.id)) continue;
+      const b = this.nodeBBox(n);
+      if (!Number.isFinite(b.x + b.y + b.w + b.h)) continue;
+      const o = { x: b.x - 2, y: b.y - 2, w: b.w + 4, h: b.h + 4 };
+      // 只保留与「两端点包围盒（外扩）」相交的节点，节点很多时避免逐条边全量扫描
+      if (region && !(o.x < region.x2 && o.x + o.w > region.x1 && o.y < region.y2 && o.y + o.h > region.y1)) continue;
+      out.push(o);
+    }
+    return out;
+  }
+  _bezierHits(ax, ay, c1, c2, bx, by, obstacles, n = 18) {
+    if (!obstacles.length) return 0;
+    let hits = 0;
+    for (let i = 1; i < n; i++) {
+      const t = i / n, u = 1 - t;
+      const px = u * u * u * ax + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * bx;
+      const py = u * u * u * ay + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * by;
+      for (const o of obstacles) if (px > o.x && px < o.x + o.w && py > o.y && py < o.y + o.h) { hits++; break; }
+    }
+    return hits;
+  }
+  _polylineHits(pts, obstacles, seg = 8) {
+    if (!obstacles.length) return 0;
+    let hits = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x1, y1] = pts[i], [x2, y2] = pts[i + 1];
+      for (let j = 1; j < seg; j++) {
+        const px = x1 + (x2 - x1) * j / seg, py = y1 + (y2 - y1) * j / seg;
+        for (const o of obstacles) if (px > o.x && px < o.x + o.w && py > o.y && py < o.y + o.h) { hits++; break; }
+      }
+    }
+    return hits;
+  }
+  // 绕行折线：从父节点接出方向外移，找一条不压节点的「通道」通到目标节点一侧
+  _mmDetour(side, ax, ay, bx, by, obstacles) {
+    const G = 24;
+    if (side === "right" || side === "left") {
+      const dir = side === "right" ? 1 : -1;
+      let ch = ax + dir * G;
+      for (let iter = 0; iter < 8; iter++) {
+        let moved = false;
+        for (const o of obstacles) {
+          const overlap = Math.min(Math.max(ay, by), o.y + o.h) - Math.max(Math.min(ay, by), o.y);
+          if (overlap <= 0) continue;
+          if (ch > o.x - 6 && ch < o.x + o.w + 6) { ch = dir > 0 ? o.x + o.w + 12 : o.x - 12; moved = true; }
+        }
+        if (!moved) break;
+      }
+      const pts = [[ax, ay], [ch, ay], [ch, by], [bx, by]];
+      return { pts, hits: this._polylineHits(pts, obstacles), d: `M ${ax},${ay} L ${ch.toFixed(1)},${ay} L ${ch.toFixed(1)},${by} L ${bx},${by}` };
+    }
+    const dir = side === "down" ? 1 : -1;
+    let ch = ay + dir * G;
+    for (let iter = 0; iter < 8; iter++) {
+      let moved = false;
+      for (const o of obstacles) {
+        const overlap = Math.min(Math.max(ax, bx), o.x + o.w) - Math.max(Math.min(ax, bx), o.x);
+        if (overlap <= 0) continue;
+        if (ch > o.y - 6 && ch < o.y + o.h + 6) { ch = dir > 0 ? o.y + o.h + 12 : o.y - 12; moved = true; }
+      }
+      if (!moved) break;
+    }
+    const pts = [[ax, ay], [ax, ch], [bx, ch], [bx, by]];
+    return { pts, hits: this._polylineHits(pts, obstacles), d: `M ${ax},${ay} L ${ax},${ch.toFixed(1)} L ${bx},${ch.toFixed(1)} L ${bx},${by}` };
+  }
+  // 脑图父子连线路径（唯一出口，渲染与文字中点共用）：
+  // 默认按接出方向画贝塞尔；若压到其它节点，逐步加大弧度避让；仍压则走折线绕行
+  _mmEdgePath(e, ends) {
+    const a = this.nodeById(e.from), b = this.nodeById(e.to);
+    const { ax, ay, bx, by } = ends;
+    if (!a || !b) return { d: `M ${ax},${ay} L ${bx},${by}`, mid: { x: (ax + bx) / 2, y: (ay + by) / 2 } };
+    const sa = this.sizes.get(a.id), sb = this.sizes.get(b.id);
+    const side = (sa && sb) ? this._mmSide(a, sa, b, sb) : "right";
+    const isElbow = this.doc.layout === "list" || this.doc.layout === "elbow";
+    if (isElbow) {
+      // 直角布局：统一从父节点侧边接出并在固定偏移处共用主干（不参与避障，保持同侧单干）
+      const G = 20;
+      let d, pts;
+      if (side === "down") { d = `M ${ax},${ay} V ${ay + G} H ${bx} V ${by}`; pts = [[ax, ay], [ax, ay + G], [bx, ay + G], [bx, by]]; }
+      else if (side === "up") { d = `M ${ax},${ay} V ${ay - G} H ${bx} V ${by}`; pts = [[ax, ay], [ax, ay - G], [bx, ay - G], [bx, by]]; }
+      else if (side === "left") { d = `M ${ax},${ay} H ${ax - G} V ${by} H ${bx}`; pts = [[ax, ay], [ax - G, ay], [ax - G, by], [bx, by]]; }
+      else { d = `M ${ax},${ay} H ${ax + G} V ${by} H ${bx}`; pts = [[ax, ay], [ax + G, ay], [ax + G, by], [bx, by]]; }
+      return { d, mid: this._polylineMid(pts) };
+    }
+    const region = {
+      x1: Math.min(ax, bx) - 140, y1: Math.min(ay, by) - 140,
+      x2: Math.max(ax, bx) + 140, y2: Math.max(ay, by) + 140,
+    };
+    const obstacles = this._edgeObstacles(a.id, b.id, region);
+    const horiz = side === "right" || side === "left";
+    const mk = (off) => horiz
+      ? { c1: { x: ax + (bx - ax) * 0.5, y: ay + off }, c2: { x: bx - (bx - ax) * 0.5, y: by + off } }
+      : { c1: { x: ax + off, y: ay + (by - ay) * 0.5 }, c2: { x: bx + off, y: by - (by - ay) * 0.5 } };
+    const cands = [mk(0)];
+    // 弧度避让只取较小偏移，避免为躲一个小节点把线甩出很夸张的大弯；实在躲不开再走绕行折线
+    for (const off of [40, 78, 120]) { cands.push(mk(off)); cands.push(mk(-off)); }
+    let best = mk(0), bestHits = Infinity;
+    for (const c of cands) {
+      const hits = this._bezierHits(ax, ay, c.c1, c.c2, bx, by, obstacles);
+      if (hits < bestHits) { bestHits = hits; best = c; if (hits === 0) break; }
+    }
+    if (bestHits > 0) {
+      const detour = this._mmDetour(side, ax, ay, bx, by, obstacles);
+      if (detour && detour.hits < bestHits) return { d: detour.d, mid: this._polylineMid(detour.pts) };
+    }
+    return {
+      d: `M ${ax},${ay} C ${best.c1.x.toFixed(1)},${best.c1.y.toFixed(1)} ${best.c2.x.toFixed(1)},${best.c2.y.toFixed(1)} ${bx},${by}`,
+      mid: this._cubicMid(ax, ay, best.c1, best.c2, bx, by),
+    };
+  }
+
   // 连线实际绘制路径的中点（文字标签 / 中点柄用）：必须和 edgeHTML 里画出来的曲线一致
   _edgePathMid(e, ends) {
     const { ax, ay, bx, by } = ends;
@@ -738,27 +854,7 @@ export class Editor {
       const q = this._assocCtrl(ax, ay, bx, by);
       return { x: 0.25 * ax + 0.5 * q.x + 0.25 * bx, y: 0.25 * ay + 0.5 * q.y + 0.25 * by };
     }
-    if (this.doc.type === "mindmap" && e.derived) {
-      const a = this.nodeById(e.from), b = this.nodeById(e.to);
-      const sa = this.sizes.get(a.id), sb = this.sizes.get(b.id);
-      const side = (sa && sb) ? this._mmSide(a, sa, b, sb) : "right";
-      const isElbow = this.doc.layout === "list" || this.doc.layout === "elbow";
-      if (isElbow) {
-        const G = 20;
-        let pts;
-        if (side === "down") pts = [[ax, ay], [ax, ay + G], [bx, ay + G], [bx, by]];
-        else if (side === "up") pts = [[ax, ay], [ax, ay - G], [bx, ay - G], [bx, by]];
-        else if (side === "left") pts = [[ax, ay], [ax - G, ay], [ax - G, by], [bx, by]];
-        else pts = [[ax, ay], [ax + G, ay], [ax + G, by], [bx, by]];
-        return this._polylineMid(pts);
-      }
-      if (side === "down" || side === "up") {
-        const my = (ay + by) / 2;
-        return this._cubicMid(ax, ay, { x: ax, y: my }, { x: bx, y: my }, bx, by);
-      }
-      const dx = bx - ax;
-      return this._cubicMid(ax, ay, { x: ax + dx * 0.5, y: ay }, { x: bx - dx * 0.5, y: by }, bx, by);
-    }
+    if (this.doc.type === "mindmap" && e.derived) return this._mmEdgePath(e, ends).mid;
     const { c1, c2 } = this._edgeCtrl(e, ends);
     return this._cubicMid(ax, ay, c1, c2, bx, by);
   }
@@ -822,25 +918,8 @@ export class Editor {
       // 自由弯曲：拖中点后的二次贝塞尔
       d = `M ${ax},${ay} Q ${e.bend.x.toFixed(1)},${e.bend.y.toFixed(1)} ${bx},${by}`;
     } else if (this.doc.type === "mindmap") {
-      // 脑图父子连线（接出方向按节点相对位置实时判断，端点由 _edgeEnds 给出）
-      const sa2 = this.sizes.get(a.id), sb2 = this.sizes.get(b.id);
-      const side = (sa2 && sb2) ? this._mmSide(a, sa2, b, sb2) : "right";
-      // list 目录组织 / elbow 直角导图：直角折线连线
-      const isElbow = this.doc.layout === "list" || this.doc.layout === "elbow";
-      if (isElbow) {
-        // 统一从父节点侧边中点接出，并在固定偏移处共用一条「主干」，避免各子节点岔出多条竖线
-        const G = 20;
-        if (side === "down") d = `M ${ax},${ay} V ${ay + G} H ${bx} V ${by}`;
-        else if (side === "up") d = `M ${ax},${ay} V ${ay - G} H ${bx} V ${by}`;
-        else if (side === "left") d = `M ${ax},${ay} H ${ax - G} V ${by} H ${bx}`;
-        else d = `M ${ax},${ay} H ${ax + G} V ${by} H ${bx}`;
-      } else if (side === "down" || side === "up") {
-        const my = (ay + by) / 2;
-        d = `M ${ax},${ay} C ${ax},${my} ${bx},${my} ${bx},${by}`;
-      } else {
-        const dx = bx - ax;
-        d = `M ${ax},${ay} C ${ax + dx * 0.5},${ay} ${bx - dx * 0.5},${by} ${bx},${by}`;
-      }
+      // 脑图父子连线：接出方向按节点相对位置实时判断，路径统一由 _mmEdgePath 生成（含避障）
+      d = this._mmEdgePath(e, ends).d;
     } else {
       // 流程图等普通连线：三次贝塞尔（控制点即两个拉杆；未调节时控制点共线 => 直线）
       const { c1, c2 } = this._edgeCtrl(e, ends);
@@ -1158,8 +1237,10 @@ export class Editor {
   // 障碍矩形集合（用于外框标题 / 概括标签 / 新节点的避让检测）：默认取所有节点包围盒并外扩 pad
   _obstacles(excludeIds = null, pad = 6) {
     const out = [];
+    const hidden = this.hiddenNodes();  // 折叠隐藏的子树不可见，不参与避让
     for (const n of this.doc.nodes) {
       if (excludeIds && excludeIds.has(n.id)) continue;
+      if (hidden.has(n.id)) continue;
       const b = this.nodeBBox(n);
       out.push({ x: b.x - pad, y: b.y - pad, w: b.w + pad * 2, h: b.h + pad * 2 });
     }
@@ -1200,7 +1281,10 @@ export class Editor {
 
   getBounds() {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    // 脑图折叠隐藏的子树不计入包围盒：整理布局 / 适配屏幕只按当前可见内容计算
+    const hidden = this.hiddenNodes();
     for (const n of this.doc.nodes) {
+      if (hidden.has(n.id)) continue;
       const b = this.nodeBBox(n); if (!b) continue;
       // 坐标异常（undefined/NaN，如旧数据孤儿节点）的节点不参与包围盒，避免视图变 NaN 整图消失
       if (!Number.isFinite(b.x + b.y + b.w + b.h)) continue;

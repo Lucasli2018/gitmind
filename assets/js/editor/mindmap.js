@@ -168,6 +168,28 @@ export function layoutMindmap(doc, layout) {
     }
   }
 
+  // 折叠节点的隐藏子树：不参与主布局（折叠后不应占用空间），但每次重排都要贴着父节点重新安放。
+  // 否则这些节点坐标会一直停在上一次的位置，而末尾的整体平移又会反复叠加，
+  // 导致包围盒一轮比一轮大、点整理布局后视图越缩越小（历史 bug）
+  function placeHidden(parent, dir) {
+    const kids = kidsAll.get(parent.id) || [];
+    const step = getW(parent) + H_GAP;
+    let cursor = parent.y;
+    for (const k of kids) {
+      k.side = dir > 0 ? "right" : "left";
+      k.x = dir > 0 ? parent.x + step : parent.x - getW(k) - H_GAP;
+      k.y = cursor;
+      cursor += getH(k) + V_GAP;
+      placeHidden(k, dir);
+    }
+  }
+  for (const n of nodes) {
+    if (!n.collapsed) continue;
+    const kids = kidsAll.get(n.id) || [];
+    if (!kids.length) continue;
+    placeHidden(n, n.side === "left" ? -1 : +1);
+  }
+
   // 稳定化：重排后整体平移，使根节点位置与重排前一致（修复工具栏操作导致导图位置改变）
   const dx = Math.round(ax0 - anchorRoot.x), dy = Math.round(ay0 - anchorRoot.y);
   if (dx || dy) for (const n of nodes) { n.x += dx; n.y += dy; }
