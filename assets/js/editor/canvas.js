@@ -1124,36 +1124,48 @@ export class Editor {
     const col = sel ? "#11b5a4" : (g.stroke || "#aab3bf");
     const box = { x: minX - pl, y: minY - pt, w: W + pl + pr, h: H + pt + pb };
     const title = g.text ? String(g.text) : "";
-    // 标题自动避让：优先用框顶预留带（框向上扩 TH，标题落在带内左上），被节点占用时在带内向右平移；
-    // 整条带都被占则改用框底预留带；两处都占才回落到框顶——无论如何都不会压住框内成员节点
-    let r = box, labelX = box.x + 10, labelY = 0, drawTitle = title;
+    // 标题一律画在外框「内部」的顶/底预留带里，绝不画到框外（旧版把带放在框外，且上/下带都被占时
+    // labelY 保持初值 0 —— 标题直接落到世界坐标 y=0 的远处并压住别的节点）。
+    // 做法：让框向顶（或底）再多留一条 TH 高的带，标题绘制在带内；只检测「新扩出的这条带」是否撞无关节点。
+    let r = box, labelX = box.x + 10, labelY = box.y + 14, drawTitle = title;
     if (title) {
-      const tw = Math.min(320, this._labelWidth(title) + 6);
-      const TH = 24;
-      const topR = { x: box.x, y: box.y - TH, w: box.w, h: box.h + TH };
-      const botR = { x: box.x, y: box.y, w: box.w, h: box.h + TH };
-      // 标题带本身也必须避开无关节点：整条带被占就不能用该带（否则框向该方向扩时会压住节点）
-      const topFree = !this._rectHitAny(topR, obstacles);
-      const botFree = !this._rectHitAny(botR, obstacles);
-      const topBandY = box.y - TH + 3;
-      const botBandY = box.y + box.h + 3;
-      // 在带内沿水平方向找空位（步进 16px）
-      const scan = (bandY, limitX) => {
-        for (let startX = box.x + 10; startX + tw <= limitX; startX += 16) {
-          if (!this._rectHitAny({ x: startX, y: bandY, w: tw, h: 18 }, obstacles)) return startX;
-        }
+      const rawW = Math.max(20, this._labelWidth(title) - 16); // _labelWidth 含 16 内边距，这里取纯文字宽
+      // 返回可用方案：th = 预留带高，base = 文字基线（都在框内侧）
+      const tryBands = (th) => {
+        const topBand = { x: box.x, y: box.y - th, w: box.w, h: th };
+        if (!this._rectHitAny(topBand, obstacles)) return { side: "top", th, base: topBand.y + 16 };
+        const botBand = { x: box.x, y: box.y + box.h, w: box.w, h: th };
+        if (!this._rectHitAny(botBand, obstacles)) return { side: "bottom", th, base: botBand.y + th - 6 };
         return null;
       };
-      const topX = topFree ? scan(topBandY, Math.max(box.x + box.w - 8, box.x + 10 + tw)) : null;
-      const botX = botFree ? scan(botBandY, Math.max(botR.x + botR.w - 8, box.x + 10 + tw)) : null;
-      if (topX !== null) { r = topR; labelX = topX; labelY = topBandY + 14; }
-      else if (botX !== null) { r = botR; labelX = botX; labelY = botBandY + 14; }
-      else if (topFree) { r = topR; labelX = box.x + 10; labelY = topBandY + 14; }
-      else if (botFree) { r = botR; labelX = box.x + 10; labelY = botBandY + 14; }
-      // 标题不向框外扩张：外框范围只由成员节点决定（成员在哪侧增删，框就只朝那侧伸缩），
-      // 标题超宽时在框内左对齐并截断加省略号，绝不像旧版那样把框撑向对侧压住无关节点
-      const availW = r.x + r.w - 8 - labelX;
-      if (availW < tw) drawTitle = this._clipLabel(title, Math.max(36, availW));
+      let pick = null;
+      for (const th of [20, 18, 16, 14]) { pick = tryBands(th); if (pick) break; }
+      // 上下都被无关节点紧贴：逐步加高预留带，把标题带挤出空位（最多 76px）
+      if (!pick) for (let extra = 4; extra <= 56 && !pick; extra += 4) pick = tryBands(20 + extra);
+      if (pick) {
+        r = pick.side === "top"
+          ? { x: box.x, y: box.y - pick.th, w: box.w, h: box.h + pick.th }
+          : { x: box.x, y: box.y, w: box.w, h: box.h + pick.th };
+        labelX = r.x + 10;
+        labelY = pick.base;
+      } else {
+        // 上下都被无关节点紧贴（连加高都挤不出带）：退到框内找一块真正空白的区域放标题，
+        // 这样既不会跑出框外压别的节点，也不会压住框内的成员节点
+        const allObst = this._obstacles(null, 3);
+        const tw2 = Math.min(rawW, Math.max(40, box.w - 16));
+        let spot = null;
+        for (let yy = box.y + 3; yy + 18 <= box.y + box.h - 2 && !spot; yy += 6) {
+          for (let xx = box.x + 8; xx + tw2 <= box.x + box.w - 8; xx += 8) {
+            if (!this._rectHitAny({ x: xx, y: yy, w: tw2, h: 18 }, allObst)) { spot = { x: xx, y: yy + 14 }; break; }
+          }
+        }
+        // 实在连一像素空白都没有：仍留在框内顶部（宁可挤，也绝不跑到框外）
+        labelX = spot ? spot.x : box.x + 10;
+        labelY = spot ? spot.y : box.y + 14;
+      }
+      // 标题不撑宽外框：超宽就框内截断加省略号（宽度只由成员节点决定）
+      const avail = Math.max(36, Math.min(r.w - 20, r.x + r.w - 8 - labelX));
+      if (rawW > avail) drawTitle = this._clipLabel(title, avail + 16);
     }
     const titleEl = title
       ? `<text x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" font-size="14" font-weight="600" fill="${col}" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(drawTitle)}</text>`
