@@ -28,6 +28,7 @@ export class Editor {
     this.sizes = new Map();
     this._drag = null; this._pan = null; this._connect = null; this._stroke = null; this._dragTarget = null;
     this._dragSide = null;                       // 脑图拖拽时的吸附侧（left / right），用于实时高亮该侧吸附点
+    this._dragMode = null;                       // 拖拽吸附意图："child"（成为子节点）/ "root"（成为根节点该侧分支）
     this._pinch = null;
     this._rmbLastDown = 0;                       // 右键上次按下时间（双击检测：右键双击切换抓手工具）
     this._rmbDblAt = 0;                          // 右键双击发生时间（contextmenu 抑制菜单用）
@@ -299,6 +300,8 @@ export class Editor {
     }
     // 节点
     for (const n of this.doc.nodes) { if (!hidden.has(n.id)) html += this.nodeHTML(n, this.selection.has(n.id)); }
+    // 脑图：拖拽中的吸附预览（从目标节点吸附点拉一条虚线到被拖节点，提示松手后连成哪条线）
+    if (this.mode === "mindmap" && this._drag && this._dragTarget && !this._forExport) html += this.dragSnapHTML();
     // 自由画笔（画在节点之上：压着图形标注也不会被遮挡）
     for (const s of this.doc.strokes) html += this.strokeHTML(s);
     if (this._stroke) html += this.strokeHTML(this._stroke);
@@ -327,6 +330,34 @@ export class Editor {
   onRender(fn) {
     this._renderListeners.add(fn);
     return () => this._renderListeners.delete(fn);
+  }
+
+  // 拖拽吸附预览：从目标节点该侧的吸附点，拉一条虚线到被拖节点朝向它的边缘，
+  // 直观预告「松手后会连成这条线」。side 由 _dragSide 决定（左/右）；
+  // 被拖节点已停在目标该侧时虚线会退化成很短的连接，不影响观感。
+  dragSnapHTML() {
+    const t = this.nodeById(this._dragTarget);
+    const d = this._drag ? this.nodeById(this._drag.id) : null;
+    if (!t || !d) return "";
+    const ts = this.sizes.get(t.id) || sizeOf(t, "mindmap");
+    const ds = this.sizes.get(d.id) || sizeOf(d, "mindmap");
+    const side = this._dragSide === "left" ? "left" : this._dragSide === "right" ? "right" : null;
+    if (!side) return "";                                  // 组织结构图（上下分支）不做左右预览
+    const GAP = 14;                                        // 与吸附点圆点同一偏移量
+    const ax = side === "left" ? t.x - GAP : t.x + ts.w + GAP;
+    const ay = t.y + ts.h / 2;
+    const ex = side === "left" ? d.x + ds.w : d.x;         // 被拖节点朝向目标的那条边
+    const ey = d.y + ds.h / 2;
+    const k = Math.max(30, Math.abs(ex - ax) * 0.45);      // 水平控制柄，走势贴近脑图连线
+    const c1x = side === "left" ? ax - k : ax + k;
+    const c2x = side === "left" ? ex + k : ex - k;
+    const path = `M ${ax.toFixed(1)},${ay.toFixed(1)} C ${c1x.toFixed(1)},${ay.toFixed(1)} ${c2x.toFixed(1)},${ey.toFixed(1)} ${ex.toFixed(1)},${ey.toFixed(1)}`;
+    return `<g class="gm-snap-preview" pointer-events="none">`
+      // 底层淡色实线打底，虚线在其上滚动，白底 / 深底都看得清
+      + `<path d="${path}" fill="none" stroke="#11b5a4" stroke-width="5" stroke-linecap="round" opacity="0.12"/>`
+      + `<path d="${path}" fill="none" stroke="#11b5a4" stroke-width="2" stroke-dasharray="8 6" stroke-linecap="round" opacity="0.95"/>`
+      + `<circle cx="${ax.toFixed(1)}" cy="${ay.toFixed(1)}" r="4.5" fill="#fff" stroke="#11b5a4" stroke-width="2"/>`
+      + `</g>`;
   }
 
   // ---------- 白板图形属性辅助 ----------
@@ -1320,6 +1351,67 @@ export class Editor {
     return best;
   }
 
+  // 落点是否「压在节点身上」：以节点包围盒外扩 pad 判定，用于区分
+  // 「拖到节点上 = 成为其子节点」与「拖到旁边 = 成为该层该侧分支」两种意图
+  _nodeInsidePoint(wx, wy, excludeId, pad = 8) {
+    if (excludeId == null) return null;
+    const blocked = new Set([excludeId, ...this.descendants(excludeId)]);
+    for (const n of this.doc.nodes) {
+      if (blocked.has(n.id)) continue;
+      const b = this.nodeBBox(n);
+      if (wx >= b.x - pad && wx <= b.x + b.w + pad && wy >= b.y - pad && wy <= b.y + b.h + pad) return n.id;
+    }
+    return null;
+  }
+  // 拖拽落点意图判定（脑图）：返回 { target, side, mode }
+  // 关键区分（左右双侧布局 mindmap / elbow）：
+  //  · 越过某个节点换到另一侧（左侧节点拖回右侧）时，即使落点压在路上挡着的兄弟节点身上，
+  //    意图也是「在同一父节点下换到这一侧」，而不是「成为那个兄弟的子节点」——
+  //    否则拖过去会被旁边已有分支抢走，表现为「拖不过去」；
+  //  · 越过父节点且落在根节点侧边带 -> 提升为根节点该侧分支（更符合「拖回主干右侧」的直觉）；
+  //  · 没有越侧时，压到节点身上 = 成为其子节点（降级挂接，正常保留）。
+  _dragSnapAt(dn, cx, cy) {
+    if (!dn) return null;
+    const layout = this.doc.layout || "mindmap";
+    const twoSided = layout === "mindmap" || layout === "elbow";
+    const sz = (id) => { const n = this.nodeById(id); return this.sizes.get(id) || sizeOf(n, "mindmap"); };
+    const sideOfPoint = (id, x) => { const n = this.nodeById(id); return x < n.x + sz(id).w / 2 ? "left" : "right"; };
+    const curSide = dn.side === "left" ? "left" : dn.side === "down" ? "down" : "right";
+    // 落点是否越过某节点的侧边界（换侧）＋ 是否落在它的侧边带垂直范围内
+    const crossed = (id) => {
+      const n = this.nodeById(id); if (!n) return false;
+      const s = sz(id), ncx = n.x + s.w / 2, half = s.w / 2 + 24;
+      return curSide === "left" ? cx > ncx + half : curSide === "right" ? cx < ncx - half : false;
+    };
+    const inBand = (id) => {
+      const n = this.nodeById(id); if (!n) return false;
+      const s = sz(id), ncx = n.x + s.w / 2, ncy = n.y + s.h / 2;
+      return Math.abs(cy - ncy) <= Math.max(s.h, 40) * 1.6 && Math.abs(cx - ncx) <= s.w / 2 + 260;
+    };
+    const root = this.doc.nodes.find((n) => n.parentId == null);
+    const rootUsable = root && root.id !== dn.id && !this.descendants(dn.id).has(root.id);
+    // ① 越侧且落在根节点侧边带 -> 成为根节点该侧分支
+    if (twoSided && rootUsable && crossed(root.id) && inBand(root.id)) {
+      return { target: root.id, side: sideOfPoint(root.id, cx), mode: "root" };
+    }
+    // ② 越侧且落在自己父节点的侧边带 -> 同一父节点下换到这一侧（不受挡路的兄弟节点影响）
+    const par = dn.parentId != null ? this.nodeById(dn.parentId) : null;
+    if (twoSided && par && crossed(par.id) && inBand(par.id)) {
+      return { target: par.id, side: sideOfPoint(par.id, cx), mode: "side" };
+    }
+    // ③ 压到某个节点身上 -> 成为其子节点
+    const inside = this._nodeInsidePoint(cx, cy, dn.id);
+    if (inside) return { target: inside, side: sideOfPoint(inside, cx), mode: "child" };
+    // ④ 拖到根节点侧面空白区 -> 成为根节点该侧分支（不用先叠到根上）
+    if (rootUsable && layout !== "structure" && inBand(root.id)) {
+      return { target: root.id, side: sideOfPoint(root.id, cx), mode: "root" };
+    }
+    // ⑤ 邻近吸附兜底
+    const near = this._nodeAtPoint(cx, cy, dn.id);
+    if (near) return { target: near, side: sideOfPoint(near, cx), mode: "child" };
+    return null;
+  }
+
   // 将 fromId 挂到 toId 之下成为其子节点；按落点相对目标中心的方位自动设定 side
   // （直角 / 逻辑 / 经典布局：偏左 -> left，偏右 -> right；组织结构图：偏上 -> up，偏下 -> down），并做防环校验。
   // 返回是否真的改变了父子关系
@@ -1336,6 +1428,8 @@ export class Editor {
     const layout = this.doc.layout;
     if (layout === "structure") from.side = fcy >= tcy ? "down" : "up";
     else if (layout === "list") from.side = "right";
+    // 拖拽过程中已判定好的吸附侧优先（拖到根节点右侧却落在节点左半边时不会被判回左侧）
+    else if (this._dragSide === "left" || this._dragSide === "right") from.side = this._dragSide;
     else from.side = fcx < tcx ? "left" : "right";          // elbow/mindmap/logic*/：落点偏左自动吸附到左边
     return true;
   }
@@ -1857,32 +1951,19 @@ export class Editor {
         const nd = this.nodeById(mid); const o = this._drag.orig[mid];
         if (nd && o) { nd.x = o.x + dx; nd.y = o.y + dy; }
       }
-      // 脑图：拖拽中实时高亮可吸附为子节点的目标（落点附近、非自身及后代），
-      // 并按拖动方向实时显示「将吸附到哪一侧」的吸附点（左侧 / 右侧）
+      // 脑图：拖拽中实时高亮可吸附的目标（压到节点上 = 成为其子节点），
+      // 并按拖动方向实时显示「将吸附到哪一侧」的吸附点与虚线预览（提示松手后的连线）
       if (this.mode === "mindmap") {
         const did = this._drag.id; const dn = did ? this.nodeById(did) : null;
-        let t = null, cx = 0, cy = 0;
+        let info = null, cx = 0, cy = 0;
         if (dn) {
           const sd = this.sizes.get(dn.id) || sizeOf(dn, "mindmap");
           cx = dn.x + sd.w / 2; cy = dn.y + sd.h / 2;
-          t = this._nodeAtPoint(cx, cy, did);
-          // 拖到根节点侧边空白区（未覆盖节点本体）也算吸附目标：
-          // 这样把节点挪到根节点左边时能立刻看到左侧吸附点，而不用先叠到根节点上
-          if (!t && this.doc.layout !== "structure") {
-            const root = this.doc.nodes.find((n) => n.parentId == null);
-            if (root && root.id !== did && !this.descendants(did).has(root.id)) {
-              const rs = this.sizes.get(root.id) || sizeOf(root, "mindmap");
-              const rcx = root.x + rs.w / 2, rcy = root.y + rs.h / 2;
-              if (Math.abs(cy - rcy) <= Math.max(rs.h, 40) * 1.5 && Math.abs(cx - rcx) <= rs.w / 2 + 240) t = root.id;
-            }
-          }
+          info = this._dragSnapAt(dn, cx, cy);
         }
-        const tn = t ? this.nodeById(t) : null;
-        if (tn && this.doc.layout !== "structure") {
-          const ts = this.sizes.get(tn.id) || sizeOf(tn, "mindmap");
-          this._dragSide = cx < tn.x + ts.w / 2 ? "left" : "right";
-        } else this._dragSide = null;
-        this._dragTarget = t;
+        this._dragTarget = info ? info.target : null;
+        this._dragSide = info && this.doc.layout !== "structure" ? info.side : null;
+        this._dragMode = info ? info.mode : null;   // "child"（成为子节点）/ "root"（成为根节点该侧分支）
       }
       this.render();
       return;
@@ -1999,13 +2080,23 @@ export class Editor {
     if (this._drag) {
       const moved = this._drag.moved;
       const dragId = this._drag.id;
-      const target = this._dragTarget;
       this._dragTarget = null;
       this._dragSide = null;
+      this._dragMode = null;
+      // 落点意图按松手瞬间的位置重新判定（与拖拽中预览保持同一套规则）：
+      // 压到节点身上 -> 成为该节点子节点；落在根节点侧边带 -> 成为根节点该侧分支
+      const nd0 = moved && dragId ? this.nodeById(dragId) : null;
+      let info = null;
+      if (nd0 && this.doc.type === "mindmap") {
+        const s0 = this.sizes.get(nd0.id) || sizeOf(nd0, "mindmap");
+        info = this._dragSnapAt(nd0, nd0.x + s0.w / 2, nd0.y + s0.h / 2);
+      }
+      const target = info ? info.target : null;
       // 脑图：拖到另一节点上 -> 成为其子节点（含整棵子树搬移），自动吸附到左/右
-      if (moved && dragId && target && target !== dragId) {
-        const nd = this.nodeById(dragId);
-        const ok = nd && this._reparentNode(dragId, target);
+      if (nd0 && target && target !== dragId) {
+        this._dragSide = this.doc.layout === "structure" ? null : info.side; // 供 _reparentNode 定 side
+        const ok = this._reparentNode(dragId, target);
+        this._dragSide = null;
         if (ok) {
           this._drag = null;
           if (this.autoAdjust) adaptMindmap(this.doc);          // 整图局部收敛：同时排好新父子树并回收原父空隙
@@ -2016,9 +2107,8 @@ export class Editor {
       }
       // 脑图：拖完松手后自动吸附——节点被拖到父节点的另一侧（例如根节点左边）时，
       // 纠正 side 并吸附到该侧的正确位置，而不是停在拖放处或对面
-      if (moved && dragId && this.doc.type === "mindmap" && this.autoAdjust) {
-        const nd = this.nodeById(dragId);
-        if (nd && nd.parentId != null) adaptMindmap(this.doc, nd.parentId);
+      if (nd0 && this.doc.type === "mindmap" && this.autoAdjust) {
+        if (nd0.parentId != null) adaptMindmap(this.doc, nd0.parentId);
       }
       if (moved) { this.onChange(); this.pushHistory(); }
       this._drag = null;
