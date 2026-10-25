@@ -254,9 +254,12 @@ export class Editor {
     for (const n of this.doc.nodes) this.sizes.set(n.id, sizeOf(n, this.doc.type));
     // 每个节点的后代总数（折叠徽标显示用）
     this._descCounts = this._calcDescCounts();
-    // 外框避让：结构变化（展开/收起/增删/拖动）后，把被外框圈到的无关节点挪到框外。
+    // 外框避让：结构变化（展开/收起/增删/拖动）后，若外框遮挡到框外节点，
+    // 就把「外框自己（成员 + 后代）」整体平移让开——绝不搬动框外的无关节点。
     // 拖动/框选中不处理，避免手里的节点被抢走；松手后的这次 render 会完成整理。
-    if (this.doc.type === "mindmap" && !this._drag && !this._pan && !this._marquee && !this._connect) this._avoidFrameOverlap();
+    if (this.doc.type === "mindmap" && !this._drag && !this._pan && !this._marquee && !this._connect) {
+      if (this._avoidFrameOverlap()) this.onChange();
+    }
 
     let html = "";
     // 白板网格（不进导出）
@@ -1160,9 +1163,11 @@ export class Editor {
     return `<g class="gm-group gm-frame" data-g="${g.id}">` +
       `<rect x="${r.x.toFixed(1)}" y="${r.y.toFixed(1)}" width="${r.w.toFixed(1)}" height="${r.h.toFixed(1)}" rx="12" fill="${col}14" stroke="${col}" stroke-width="${sel ? 2.5 : 1.8}" stroke-dasharray="7 5"/>` + titleEl + `</g>`;
   }
-  // 外框避障：外框是矩形，无法绕开落在圈内的无关节点 —— 直接把被圈到的节点（连同其可见子树）
-  // 平移到框外最近空位，做到「每次调整位置后外框整体不遮挡任何节点」。
-  // 返回是否移动过节点（调用方据此触发保存）
+  // 外框避障：外框是矩形，无法绕开落在圈内的无关节点。
+  // 领主规则：移动的是「外框自己」——成员节点连同其可见后代作为一组整体平移，把框让开；
+  // 框外的无关节点一律不动（绝不为了腾地方去搬别人的节点）。
+  // 由于框 = 成员包围盒 + 四边内距，组整体平移时框形不变，所以只要框不撞障碍，组内节点必然也不撞。
+  // 返回是否移动过节点。
   _avoidFrameOverlap() {
     if (this.doc.type !== "mindmap") return false;
     const groups = this.doc.groups;
@@ -1171,63 +1176,44 @@ export class Editor {
     let moved = false;
     for (const g of groups) {
       if (g.kind !== "frame" || !Array.isArray(g.ids) || !g.ids.length) continue;
-      // 每轮只挪一个被撞节点，最多 12 轮：挪开后框会重新收缩，可能暴露新的冲突
-      for (let round = 0; round < 12; round++) {
+      // 平移后四边避障内距可能变化，给几轮收敛机会（通常 1 轮即稳定）
+      for (let round = 0; round < 4; round++) {
         const members = g.ids.map((id) => this.nodeById(id)).filter((n) => n && !hidden.has(n.id));
         if (!members.length) break;
         const geo = this._frameBox(members, !!g.text);
         if (!geo) break;
         const r = geo.r;
-        const hits = [];
-        for (const n of this.doc.nodes) {
-          if (geo.excl.has(n.id) || hidden.has(n.id)) continue;
-          const b = this.nodeBBox(n);
-          if (b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y) hits.push(n);
+        // 「自己人」集合：成员 + 成员的全部可见后代 —— 整组一起移动，组内相对位置保持不变
+        const moveIds = new Set();
+        for (const m of members) {
+          moveIds.add(m.id);
+          for (const d of this.descendants(m.id)) if (!hidden.has(d)) moveIds.add(d);
         }
-        if (!hits.length) break;
-        // 只挪「最上层」的被撞节点：父节点也被撞时先挪父，整棵子树一起让开
-        const hitSet = new Set(hits.map((n) => n.id));
-        const pick = hits.find((n) => n.parentId == null || !hitSet.has(n.parentId)) || hits[0];
-        if (!this._nudgeOutOfRect(pick, r, geo.excl, hidden)) break;
+        if (!moveIds.size) break;
+        // 框外的无关节点只作为障碍参与检测，绝不移动
+        const obst = this._obstacles(moveIds, 10);
+        const hitAt = (dx, dy) => this._rectHitAny({ x: r.x + dx, y: r.y + dy, w: r.w, h: r.h }, obst);
+        if (!hitAt(0, 0)) break; // 已经不遮挡，收工
+        // 四方向步进试探：找到让「整个框」离开所有障碍的最小位移；四面都不通就保持原状（不乱跳）
+        const STEP = 6, MAX = 240;
+        const probe = (ux, uy) => {
+          for (let i = 1; i <= MAX; i++) { const d = i * STEP; if (!hitAt(ux * d, uy * d)) return d; }
+          return 0;
+        };
+        const dL = probe(-1, 0), dR = probe(1, 0), dU = probe(0, -1), dD = probe(0, 1);
+        const opts = [];
+        if (dL) opts.push({ dx: -dL, dy: 0 });
+        if (dR) opts.push({ dx: dR, dy: 0 });
+        if (dU) opts.push({ dx: 0, dy: -dU });
+        if (dD) opts.push({ dx: 0, dy: dD });
+        if (!opts.length) break;
+        opts.sort((a, b) => (Math.abs(a.dx) + Math.abs(a.dy)) - (Math.abs(b.dx) + Math.abs(b.dy)));
+        const best = opts[0];
+        for (const id of moveIds) { const nd = this.nodeById(id); if (nd) { nd.x += best.dx; nd.y += best.dy; } }
         moved = true;
       }
     }
     return moved;
-  }
-  // 把节点（连同可见子树）整体平移到矩形 r 外；四方向取位移最小且不撞其他节点者
-  _nudgeOutOfRect(node, r, exclIds, hidden) {
-    const GAP = 18;
-    const ids = [node.id, ...this.descendants(node.id)].filter((id) => !hidden.has(id));
-    if (!ids.length) return false;
-    const skip = new Set(exclIds || []);
-    for (const id of ids) skip.add(id);
-    const obst = this._obstacles(skip, 10);
-    const bbox = (pdx = 0, pdy = 0) => {
-      let mnx = Infinity, mny = Infinity, mxx = -Infinity, mxy = -Infinity;
-      for (const id of ids) {
-        const nd = this.nodeById(id); if (!nd) continue;
-        const b = this.nodeBBox(nd);
-        mnx = Math.min(mnx, b.x + pdx); mny = Math.min(mny, b.y + pdy);
-        mxx = Math.max(mxx, b.x + b.w + pdx); mxy = Math.max(mxy, b.y + b.h + pdy);
-      }
-      return { x: mnx, y: mny, w: mxx - mnx, h: mxy - mny };
-    };
-    const base = bbox();
-    if (!Number.isFinite(base.x) || !Number.isFinite(base.y)) return false;
-    const cands = [
-      { dx: (r.x - GAP) - (base.x + base.w), dy: 0 },  // 向左让出
-      { dx: (r.x + r.w + GAP) - base.x, dy: 0 },       // 向右让出
-      { dx: 0, dy: (r.y - GAP) - (base.y + base.h) },  // 向上让出
-      { dx: 0, dy: (r.y + r.h + GAP) - base.y },       // 向下让出
-    ].sort((a, b) => (Math.abs(a.dx) + Math.abs(a.dy)) - (Math.abs(b.dx) + Math.abs(b.dy)));
-    for (const c of cands) {
-      if (!c.dx && !c.dy) continue;
-      const nb = bbox(c.dx, c.dy);
-      if (this._rectHitAny(nb, obst)) continue; // 挪过去会撞别的节点
-      for (const id of ids) { const nd = this.nodeById(id); if (nd) { nd.x += c.dx; nd.y += c.dy; } }
-      return true;
-    }
-    return false;
   }
   // 概括：一组成员右侧的大括号 + 标签（g.text，默认「概要」）；sel 选中高亮
   summaryHTML(members, g, sel) {
