@@ -27,6 +27,7 @@ export class Editor {
     this.selection = new Set();
     this.sizes = new Map();
     this._drag = null; this._pan = null; this._connect = null; this._stroke = null; this._dragTarget = null;
+    this._dragSide = null;                       // 脑图拖拽时的吸附侧（left / right），用于实时高亮该侧吸附点
     this._pinch = null;
     this._rmbLastDown = 0;                       // 右键上次按下时间（双击检测：右键双击切换抓手工具）
     this._rmbDblAt = 0;                          // 右键双击发生时间（contextmenu 抑制菜单用）
@@ -558,9 +559,20 @@ export class Editor {
     if (this.tool === "link" && (this._linkHover === n.id || this._connectHover === n.id) && !this._forExport) {
       inner += `<rect x="-8" y="-8" width="${w + 16}" height="${h + 16}" rx="16" fill="none" stroke="#ff9f43" stroke-width="2.5" stroke-dasharray="7 5"/>`;
     }
-    // 脑图：节点拖拽中，可吸附为子节点的目标节点高亮（青色虚线框 + 淡底）
+    // 脑图：节点拖拽中，可吸附为子节点的目标节点高亮（青色虚线框 + 淡底），
+    // 并在该侧实时显示吸附点 —— 拖到左边就亮左边，提示松手后会吸附到这一侧
     if (this.mode === "mindmap" && this._dragTarget === n.id && !this._forExport) {
       inner += `<rect x="-8" y="-8" width="${w + 16}" height="${h + 16}" rx="16" fill="rgba(17,181,164,0.10)" stroke="#11b5a4" stroke-width="2.5" stroke-dasharray="7 5"/>`;
+      const side = this._dragSide === "left" || this._dragSide === "right" ? this._dragSide : null;
+      if (side) {
+        const ax = side === "left" ? -14 : w + 14, ay = h / 2;
+        inner += `<g class="gm-snap-dot" pointer-events="none">`
+          + `<circle cx="${ax}" cy="${ay}" r="12.5" fill="rgba(17,181,164,0.14)" stroke="#11b5a4" stroke-width="1.5"/>`
+          + `<circle cx="${ax}" cy="${ay}" r="12.5" fill="none" stroke="#11b5a4" stroke-width="2">`
+          + `<animate attributeName="r" values="12.5;19;12.5" dur="1.1s" repeatCount="indefinite"/>`
+          + `<animate attributeName="opacity" values="0.85;0.1;0.85" dur="1.1s" repeatCount="indefinite"/></circle>`
+          + `</g>`;
+      }
     }
     // 白板：选中元素的自由变换手柄
     if (selected && this.mode === "whiteboard" && !this._forExport) {
@@ -1845,11 +1857,31 @@ export class Editor {
         const nd = this.nodeById(mid); const o = this._drag.orig[mid];
         if (nd && o) { nd.x = o.x + dx; nd.y = o.y + dy; }
       }
-      // 脑图：拖拽中实时高亮可吸附为子节点的目标（落点附近、非自身及后代）
+      // 脑图：拖拽中实时高亮可吸附为子节点的目标（落点附近、非自身及后代），
+      // 并按拖动方向实时显示「将吸附到哪一侧」的吸附点（左侧 / 右侧）
       if (this.mode === "mindmap") {
         const did = this._drag.id; const dn = did ? this.nodeById(did) : null;
-        let t = null;
-        if (dn) { const sd = this.sizes.get(dn.id) || sizeOf(dn, "mindmap"); t = this._nodeAtPoint(dn.x + sd.w / 2, dn.y + sd.h / 2, did); }
+        let t = null, cx = 0, cy = 0;
+        if (dn) {
+          const sd = this.sizes.get(dn.id) || sizeOf(dn, "mindmap");
+          cx = dn.x + sd.w / 2; cy = dn.y + sd.h / 2;
+          t = this._nodeAtPoint(cx, cy, did);
+          // 拖到根节点侧边空白区（未覆盖节点本体）也算吸附目标：
+          // 这样把节点挪到根节点左边时能立刻看到左侧吸附点，而不用先叠到根节点上
+          if (!t && this.doc.layout !== "structure") {
+            const root = this.doc.nodes.find((n) => n.parentId == null);
+            if (root && root.id !== did && !this.descendants(did).has(root.id)) {
+              const rs = this.sizes.get(root.id) || sizeOf(root, "mindmap");
+              const rcx = root.x + rs.w / 2, rcy = root.y + rs.h / 2;
+              if (Math.abs(cy - rcy) <= Math.max(rs.h, 40) * 1.5 && Math.abs(cx - rcx) <= rs.w / 2 + 240) t = root.id;
+            }
+          }
+        }
+        const tn = t ? this.nodeById(t) : null;
+        if (tn && this.doc.layout !== "structure") {
+          const ts = this.sizes.get(tn.id) || sizeOf(tn, "mindmap");
+          this._dragSide = cx < tn.x + ts.w / 2 ? "left" : "right";
+        } else this._dragSide = null;
         this._dragTarget = t;
       }
       this.render();
@@ -1969,6 +2001,7 @@ export class Editor {
       const dragId = this._drag.id;
       const target = this._dragTarget;
       this._dragTarget = null;
+      this._dragSide = null;
       // 脑图：拖到另一节点上 -> 成为其子节点（含整棵子树搬移），自动吸附到左/右
       if (moved && dragId && target && target !== dragId) {
         const nd = this.nodeById(dragId);

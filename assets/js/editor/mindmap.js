@@ -277,6 +277,28 @@ export function adaptMindmap(doc, focusId, sideHint) {
     for (const k of kids) s += subW(k) + H_GAP;
     return Math.max(getW(node), s - H_GAP);
   };
+  // 外框内距：外框以成员包围盒为基准外扩（canvas 侧 PAD=14，带标题时顶边 24）。
+  // 纵向让位时把这层内距一并算作「上方分支的占用」，否则展开的子树会压在外框边框上
+  const framePad = new Map(); // nodeId -> { t, b }
+  for (const g of doc.groups || []) {
+    if (!g || g.kind !== "frame" || !Array.isArray(g.ids)) continue;
+    for (const id of g.ids) framePad.set(id, { t: g.text ? 24 : 14, b: 14 });
+  }
+  // 可见子树的真实包围盒（含自身与全部可见后代）：节点展开后子节点会围绕它向上 / 向下扩张，
+  // 纵向紧排必须按实际占用计算，否则按 h 估算会漏掉向上溢出的那一块，造成上下遮挡
+  const subBox = (node) => {
+    let top = node.y, bot = node.y + getH(node), left = node.x, right = node.x + getW(node);
+    for (const c of cm.get(node.id) || []) {
+      const b = subBox(c);
+      if (b.top < top) top = b.top;
+      if (b.bot > bot) bot = b.bot;
+      if (b.left < left) left = b.left;
+      if (b.right > right) right = b.right;
+    }
+    const fp = framePad.get(node.id);
+    if (fp) { top -= fp.t; bot += fp.b; } // 外框占用的实际上下边界
+    return { top, bot, left, right };
+  };
   const groupHeight = (list) => { let c = 0; for (const k of list) c += subH(k) + V_GAP; return list.length ? c - V_GAP : 0; };
   const groupWidth = (list) => { let c = 0; for (const k of list) c += subW(k) + H_GAP; return list.length ? c - H_GAP : 0; };
   const dirFor = (side) => (side === "left" ? -1 : 1);
@@ -385,40 +407,44 @@ export function adaptMindmap(doc, focusId, sideHint) {
   };
   // 同级之间纵向收敛：以「路径节点」(发生变化的那一支) 为锚，仅向下紧排其下方兄弟——
   // 上方兄弟与路径节点保持原位，下方兄弟按需要上移（收起时空隙被回收）或下移（展开/增删时让位），
-  // 从而既消除重叠又绝不搬动无关节点；随后父节点在子节点之间重新居中（仅调父节点 y，不动子节点）
+  // 从而既消除重叠又绝不搬动无关节点；随后父节点在子节点之间重新居中（仅调父节点 y，不动子节点）。
+  // 占用高度按子树的真实包围盒计算：展开节点时子节点会围绕它向上扩张，向上溢出撞到上方兄弟时
+  // 把「该节点 + 其整棵子树」一起下移让位（而不是把上方节点搬走）
   const resolveSiblings = (parent, pathNode) => {
     const all = cm.get(parent.id) || [];
     if (!all.length) return;
-    // 双侧父节点（左右都有分支）：只把 pathNode 所在那一侧重新紧排并垂直居中，对侧与父节点纹丝不动
-    if (pathNode && new Set(all.map(sideOf)).size > 1) {
-      const group = all.filter((n) => sideOf(n) === sideOf(pathNode));
-      if (group.length) {
-        const total = groupHeight(group);
-        let top = parent.y + getH(parent) / 2 - total / 2;
-        for (const k of group) {
-          const dy = top - k.y;
-          if (dy !== 0) shiftSubtree(k, dy);
-          top += subH(k) + V_GAP;
-        }
-      }
-      return;
-    }
-    if (all.length >= 1) {
-      const sorted = [...all].sort((a, b) => a.y - b.y);
+    // 双侧父节点（左右都有分支）：只收敛 pathNode 所在那一侧，对侧与父节点纹丝不动
+    const multi = !!pathNode && new Set(all.map(sideOf)).size > 1;
+    const group = multi ? all.filter((n) => sideOf(n) === sideOf(pathNode)) : all;
+    if (group.length) {
+      const sorted = [...group].sort((a, b) => a.y - b.y);
       const pi = pathNode ? sorted.indexOf(pathNode) : 0;
       const start = pi < 0 ? 0 : pi; // 路径节点（含）及其下方兄弟参与紧排；上方兄弟纹丝不动
-      let cursor = sorted[start].y;
+      // 紧排起点：贴住上方兄弟子树的真实底边 + 间距（无上方兄弟时为 -Infinity）
+      let cursor = -Infinity;
+      for (let i = 0; i < start; i++) {
+        const b = subBox(sorted[i]);
+        if (b.bot > cursor) cursor = b.bot;
+      }
+      if (Number.isFinite(cursor)) cursor += V_GAP;
       for (let i = start; i < sorted.length; i++) {
         const k = sorted[i];
-        const dy = cursor - k.y;
+        const box = subBox(k);
+        // 路径节点：只在下移方向让位，绝不因上方空隙被上拉（避免无谓搬动）；
+        // 其下方兄弟：可上移回收空隙，也可下移让位
+        const dy = i === start
+          ? (Number.isFinite(cursor) ? Math.max(0, cursor - box.top) : 0)
+          : cursor - box.top;
         if (dy !== 0) shiftSubtree(k, dy);
-        cursor += subH(k) + V_GAP;
+        cursor = box.bot + dy + V_GAP;
       }
     }
+    if (multi) return; // 双侧父节点：对侧分支与父节点都不动
     const list = cm.get(parent.id) || [];
     if (list.length) {
-      const first = list[0], last = list[list.length - 1];
-      parent.y = (first.y + (last.y + getH(last))) / 2 - getH(parent) / 2;
+      let top = Infinity, bot = -Infinity;
+      for (const k of list) { const b = subBox(k); if (b.top < top) top = b.top; if (b.bot > bot) bot = b.bot; }
+      parent.y = (top + bot) / 2 - getH(parent) / 2;
     }
   };
 
