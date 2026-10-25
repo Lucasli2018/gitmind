@@ -640,7 +640,7 @@ function renderMmNodePanel(panel) {
 // ---------- 右侧图标栏（属性 / 主题 / 结构 / 大纲 / 设置，参考 mind-map） ----------
 // 编辑器行为设置（localStorage 持久化，应用到 editor 实例）
 const GM_SETTINGS_KEY = "gm_editor_settings";
-let settings = { grid: false, autoEdit: true, dblCreate: false, wheelPan: false, noCompressImage: false };
+let settings = { grid: false, autoEdit: true, dblCreate: false, wheelPan: false, noCompressImage: false, autoAdjust: true, autoRelayout: false };
 try { Object.assign(settings, JSON.parse(localStorage.getItem(GM_SETTINGS_KEY) || "{}")); } catch (_) {}
 function saveSettings() {
   try { localStorage.setItem(GM_SETTINGS_KEY, JSON.stringify(settings)); } catch (_) {}
@@ -651,6 +651,8 @@ function applySettings() {
   editor.autoEditNewNode = settings.autoEdit !== false;
   editor.dblClickCreate = !!settings.dblCreate;
   editor.wheelPan = !!settings.wheelPan;
+  editor.autoAdjust = settings.autoAdjust !== false; // 默认开启：结构操作后局部自适应（防遮挡/平衡，不覆盖无关节点）
+  editor.autoRelayout = settings.autoRelayout !== false; // 整图重新布局（覆盖手动位置），默认关闭
   editor.render();
 }
 function buildSideRail() {
@@ -714,6 +716,8 @@ function toggleSettingsPanel(btn) {
     `<div class="gm-set-head"><b>设置</b><button class="gm-set-x" aria-label="关闭">×</button></div>` +
     chk("grid", "显示网格", "在画布上显示点状网格") +
     chk("autoEdit", "新节点自动进入编辑", "新建节点后直接开始输入文字") +
+    chk("autoAdjust", "结构操作后自动调节节点位置", "脑图收起 / 展开 / 增删节点后，仅局部自适应调整受影响分支，避免节点互相遮挡并保持平衡；不改动无关节点（含手动摆放）的位置") +
+    chk("autoRelayout", "结构操作后整图重新布局", "收起 / 展开 / 增删后重新计算整张导图布局，会覆盖手动拖放的位置（与上面的「自动调节」互斥，优先用自动调节）") +
     chk("dblCreate", "双击空白处创建子节点", "双击画布空白处在中心主题下新增节点") +
     chk("noCompressImage", "上传图片不压缩", "关闭后插入的图片默认压缩到 100KB 以内；开启则按原图上传") +
     `<div class="gm-set-t">鼠标滚轮行为</div>` +
@@ -907,8 +911,8 @@ function renderEdgeStylePanel(panel, eid) {
     `<div class="gm-ws-row seg">${sBtn("solid", "实线", "") + sBtn("dashed", "虚线", ' stroke-dasharray="5 3"') + sBtn("dotted", "点线", ' stroke-dasharray="0.5 3.5" stroke-linecap="round"')}</div>` +
     `<div class="gm-ws-t">形状</div>` +
     `<div class="gm-ws-row seg">` +
-      `<button class="gm-ws-seg" data-ek="bend" data-ev="curve" title="恢复曲线">⌒</button>` +
-      `<button class="gm-ws-seg" data-ek="bend" data-ev="straight" title="拉直">—</button>` +
+      `<button class="gm-ws-seg${(e.bend && (e.bend.x || e.bend.y)) ? "" : " active"}" data-ek="bend" data-ev="curve" title="恢复曲线">⌒</button>` +
+      `<button class="gm-ws-seg${(e.bend && (e.bend.x || e.bend.y)) ? " active" : ""}" data-ek="bend" data-ev="straight" title="拉直">—</button>` +
     `</div>` +
     (e.label != null ? `<div class="gm-ws-row"><button class="gm-ws-seg" data-ek="label" data-ev="edit" title="编辑文字">编辑文字</button></div>` : "") +
     `<div class="gm-ws-row"><button class="gm-ws-seg danger" data-ek="del" data-ev="1" title="删除连线">删除连线</button></div>`;
@@ -960,8 +964,8 @@ function renderDerivedEdgePanel(panel, childId) {
     `<div class="gm-ws-row seg">${sBtn("solid", "实线", "") + sBtn("dashed", "虚线", ' stroke-dasharray="5 3"') + sBtn("dotted", "点线", ' stroke-dasharray="0.5 3.5" stroke-linecap="round"')}</div>` +
     `<div class="gm-ws-t">形状</div>` +
     `<div class="gm-ws-row seg">` +
-      `<button class="gm-ws-seg" data-ek="bend" data-ev="curve" title="恢复曲线">⌒</button>` +
-      `<button class="gm-ws-seg" data-ek="bend" data-ev="straight" title="拉直">—</button>` +
+      `<button class="gm-ws-seg${(n.edgeBend && (n.edgeBend.x || n.edgeBend.y)) ? "" : " active"}" data-ek="bend" data-ev="curve" title="恢复曲线">⌒</button>` +
+      `<button class="gm-ws-seg${(n.edgeBend && (n.edgeBend.x || n.edgeBend.y)) ? " active" : ""}" data-ek="bend" data-ev="straight" title="拉直">—</button>` +
     `</div>` +
     `<div class="gm-ws-row"><button class="gm-ws-seg" data-ek="label" data-ev="edit" title="编辑文字">编辑文字</button></div>`;
   panel.querySelectorAll("[data-ek]").forEach((b) => {

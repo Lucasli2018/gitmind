@@ -1,6 +1,6 @@
 // 编辑器内核：SVG 画布、视图变换、选择/拖拽、连线、文本编辑、渲染
 import { newId, sizeOf, normalizeDoc } from "./model.js";
-import { layoutMindmap } from "./mindmap.js";
+import { layoutMindmap, adaptMindmap } from "./mindmap.js";
 
 const SVGNS = "http://www.w3.org/2000/svg";
 const PALETTE = ["#11b5a4", "#2f80ed", "#ff7a59", "#f5a623", "#9b59b6", "#16a34a", "#e5484d", "#0ea5e9"];
@@ -51,6 +51,8 @@ export class Editor {
     this.autoEditNewNode = true;  // 新节点自动进入文字编辑
     this.dblClickCreate = false;  // 双击空白处创建子节点（脑图）
     this.wheelPan = false;        // 滚轮上下平移视图（false = 缩放）
+    this.autoRelayout = false;    // 脑图结构操作后整图重新布局（会覆盖手动位置，默认关）
+    this.autoAdjust = true;       // 脑图结构操作（增/删/收起/展开）后局部自适应（默认开，不覆盖无关节点）
     this._onNoteBadge = opts.onNoteBadge || null; // 点击节点备注徽标 -> 弹框查看/编辑
     this._onEdgeEdit = opts.onEdgeEdit || null;   // 双击连线 -> 弹出连线编辑弹框
     this._onGroupEdit = opts.onGroupEdit || null; // 双击外框/概括 -> 弹出分组编辑弹框
@@ -814,6 +816,12 @@ export class Editor {
       else { d = `M ${ax},${ay} H ${ax + G} V ${by} H ${bx}`; pts = [[ax, ay], [ax + G, ay], [ax + G, by], [bx, by]]; }
       return { d, mid: this._polylineMid(pts) };
     }
+    // 用户调过形状（拉直 / 调弯）：以弯曲控制点为二次贝塞尔；控制点位于端点连线上时退化为直线
+    // 必须为首个命中分支，否则后面的避障 / 默认曲线会覆盖形状选择，导致「形状」不生效
+    if (e.bend && (e.bend.x || e.bend.y)) {
+      const d = `M ${ax},${ay} Q ${e.bend.x.toFixed(1)},${e.bend.y.toFixed(1)} ${bx},${by}`;
+      return { d, mid: this._quadMid(ax, ay, bx, by, e.bend) };
+    }
     const region = {
       x1: Math.min(ax, bx) - 140, y1: Math.min(ay, by) - 140,
       x2: Math.max(ax, bx) + 140, y2: Math.max(ay, by) + 140,
@@ -976,6 +984,7 @@ export class Editor {
   }
 
   // 连线样式：批量应用到选中的连线（stroke/strokeWidth/strokeStyle）；bend: null 移除 / "straight" 拉直
+  // 注意：bend（形状）优先级须高于拉杆（aLev/bLev）——设置形状时同步清除拉杆，否则渲染时拉杆分支先行命中导致形状不生效
   setEdgeStyle(patch) {
     const ids = [];
     for (const k of this.selection) if (k.startsWith && k.startsWith("e:")) ids.push(k.slice(2));
@@ -986,9 +995,12 @@ export class Editor {
         if (patch[k] === null) delete e[k];
         else e[k] = patch[k];
       }
-      if (patch.bend === "straight") {
-        const { ax, ay, bx, by } = this._edgeEnds(e);
-        e.bend = { x: (ax + bx) / 2, y: (ay + by) / 2 };
+      if ("bend" in patch) {
+        delete e.aLev; delete e.bLev; // 形状选择覆盖拉杆弧度
+        if (patch.bend === "straight") {
+          const { ax, ay, bx, by } = this._edgeEnds(e);
+          e.bend = { x: (ax + bx) / 2, y: (ay + by) / 2 };
+        }
       }
     }
     this.render(); this.onChange(); this.pushHistory();
@@ -997,7 +1009,10 @@ export class Editor {
   setEdgeStyleFor(id, patch) {
     const e = this.edgeById(id); if (!e) return;
     for (const k of Object.keys(patch)) { if (patch[k] === null) delete e[k]; else e[k] = patch[k]; }
-    if (patch.bend === "straight") { const { ax, ay, bx, by } = this._edgeEnds(e); e.bend = { x: (ax + bx) / 2, y: (ay + by) / 2 }; }
+    if ("bend" in patch) {
+      delete e.aLev; delete e.bLev;
+      if (patch.bend === "straight") { const { ax, ay, bx, by } = this._edgeEnds(e); e.bend = { x: (ax + bx) / 2, y: (ay + by) / 2 }; }
+    }
     this.render(); this.onChange(); this.pushHistory();
   }
 
@@ -1008,13 +1023,9 @@ export class Editor {
     const p = this.nodeById(n.parentId); if (!p) return;
     if (mode === "curve") { delete n.edgeBend; }
     else {
-      const sa = this.sizes.get(p.id) || sizeOf(p, this.doc.type);
-      const sb = this.sizes.get(n.id) || sizeOf(n, this.doc.type);
-      const side = n.side || "right";
-      let ax, ay, bx, by;
-      if (side === "left") { ax = p.x; ay = p.y + sa.h / 2; bx = n.x + sb.w; by = n.y + sb.h / 2; }
-      else if (side === "down") { ax = p.x + sa.w / 2; ay = p.y + sa.h; bx = n.x + sb.w / 2; by = n.y; }
-      else { ax = p.x + sa.w; ay = p.y + sa.h / 2; bx = n.x; by = n.y + sb.h / 2; }
+      // 复用 _edgeEnds：与渲染完全一致的端点计算（含 side 判断 / 端点吸附），避免自算中点偏差
+      const de = { id: "p-" + n.id, from: p.id, to: n.id, derived: true };
+      const { ax, ay, bx, by } = this._edgeEnds(de);
       n.edgeBend = { x: (ax + bx) / 2, y: (ay + by) / 2 };
     }
     this.render(); this.onChange(); this.pushHistory();
@@ -1843,11 +1854,13 @@ export class Editor {
     this.svg.classList.remove("panning");
   }
 
-  // 切换节点折叠状态（脑图）：只切换显隐，不重排布局（保留用户拖动的位置）
+  // 切换节点折叠状态（脑图）：设置开启时收起/展开后自动重排布局，否则只切换显隐（保留拖动位置）
   toggleCollapse(id) {
     const n = this.nodeById(id);
     if (!n || !this.doc.nodes.some((c) => c.parentId === n.id)) return;
     n.collapsed = !n.collapsed;
+    if (this.autoAdjust) adaptMindmap(this.doc, id);
+    else if (this.autoRelayout) layoutMindmap(this.doc);
     this.render(); this.onChange(); this.pushHistory();
   }
 
@@ -2098,6 +2111,8 @@ export class Editor {
     if (this.doc.groups && this.doc.groups.length) {
       for (const g of this.doc.groups) if (Array.isArray(g.ids) && g.ids.includes(parentId)) g.ids.push(id);
     }
+    if (this.autoAdjust) adaptMindmap(this.doc, parentId); // 设置开启：新增后局部自适应
+    else if (this.autoRelayout) layoutMindmap(this.doc); // 设置开启：新增后自动重排
     this.selection = new Set([id]);
     this.render(); this.onChange();
     this.pushHistory();
@@ -2131,6 +2146,8 @@ export class Editor {
     if (this.doc.groups && this.doc.groups.length) {
       for (const g of this.doc.groups) if (Array.isArray(g.ids) && g.ids.includes(nodeId)) g.ids.push(id);
     }
+    if (this.autoAdjust) adaptMindmap(this.doc, node.parentId); // 设置开启：新增后局部自适应
+    else if (this.autoRelayout) layoutMindmap(this.doc); // 设置开启：新增后自动重排
     this.selection = new Set([id]);
     this.render(); this.onChange();
     this.pushHistory();
@@ -2169,9 +2186,28 @@ export class Editor {
       const ids = nodeIds.filter((id) => { const n = this.nodeById(id); return n && !n.locked; });
       if (ids.length) {
         const toDelete = this.getMovable(new Set(ids));
+        // 删除前先收集受影响的「留存祖先」：删除子树后需要重新收敛的分支根
+        const focusSet = new Set();
+        for (const id of toDelete) {
+          const n = this.nodeById(id);
+          if (!n) continue;
+          let pid = n.parentId;
+          while (pid != null) {
+            const p = this.nodeById(pid);
+            if (!p) break;
+            if (toDelete.has(pid)) { pid = p.parentId; continue; }
+            focusSet.add(pid);
+            break;
+          }
+        }
         this.doc.nodes = this.doc.nodes.filter((n) => !toDelete.has(n.id));
         this.doc.edges = this.doc.edges.filter((e) => !toDelete.has(e.from) && !toDelete.has(e.to));
         changed = true;
+        // 设置开启：脑图删除节点后自动收敛（局部自适应，不覆盖无关节点）
+        if (this.doc.type === "mindmap") {
+          if (this.autoAdjust) { for (const f of focusSet) adaptMindmap(this.doc, f); }
+          else if (this.autoRelayout) layoutMindmap(this.doc);
+        }
       }
     }
     if (!changed) return;

@@ -195,6 +195,158 @@ export function layoutMindmap(doc, layout) {
   if (dx || dy) for (const n of nodes) { n.x += dx; n.y += dy; }
 }
 
+// 节点自适应（局部重排）：结构变化（收起 / 展开 / 新增 / 删除）后，只重排受影响的分支，
+// 回收 / 补位空隙，并沿祖先链推开重叠的兄弟子树、让父节点在子节点间重新居中，
+// 做到「节点不遮挡、视觉平衡」，但绝不覆盖无关节点（含手动摆放）的位置——
+// 与 layoutMindmap（整图重新布局，会改动所有节点）不同。
+// focusId：发生结构变化的根节点（其可见子树被重排）；缺省则对整个可见树做局部收敛。
+export function adaptMindmap(doc, focusId) {
+  const nodes = doc.nodes || [];
+  if (!nodes.length) return;
+  // 坐标防护：旧数据 / 导入异常导致的 NaN 先归零，避免计算扩散成 NaN
+  for (const n of nodes) { if (!Number.isFinite(n.x)) n.x = 0; if (!Number.isFinite(n.y)) n.y = 0; }
+  const layout = doc.layout || "mindmap";
+
+  // 折叠隐藏集合（已折叠节点的整棵后代子树）
+  const kidsAll = new Map();
+  for (const n of nodes) if (n.parentId != null) { if (!kidsAll.has(n.parentId)) kidsAll.set(n.parentId, []); kidsAll.get(n.parentId).push(n); }
+  const hidden = new Set();
+  const stack = nodes.filter((n) => n.collapsed && (kidsAll.get(n.id) || []).length).map((n) => n.id);
+  while (stack.length) {
+    const id = stack.pop();
+    for (const c of kidsAll.get(id) || []) if (!hidden.has(c.id)) { hidden.add(c.id); stack.push(c.id); }
+  }
+
+  const idSet = new Set(nodes.map((n) => n.id));
+  const nodeById = (id) => nodes.find((n) => n.id === id);
+  // 可见子节点映射（跳过隐藏节点及其根）
+  const cm = new Map();
+  for (const n of nodes) {
+    if (hidden.has(n.id)) continue;
+    if (n.parentId != null && idSet.has(n.parentId) && !hidden.has(n.parentId)) {
+      if (!cm.has(n.parentId)) cm.set(n.parentId, []);
+      cm.get(n.parentId).push(n);
+    }
+  }
+
+  const getH = (n) => sizeOf(n, "mindmap").h;
+  const getW = (n) => sizeOf(n, "mindmap").w;
+  // 子树占用高度（含后代）
+  const subH = (node) => {
+    const kids = cm.get(node.id) || [];
+    if (!kids.length) return getH(node);
+    let s = 0;
+    for (const k of kids) s += subH(k) + V_GAP;
+    return Math.max(getH(node), s - V_GAP);
+  };
+  // 子树占用宽度（含后代）
+  const subW = (node) => {
+    const kids = cm.get(node.id) || [];
+    if (!kids.length) return getW(node);
+    let s = 0;
+    for (const k of kids) s += subW(k) + H_GAP;
+    return Math.max(getW(node), s - H_GAP);
+  };
+  const groupHeight = (list) => { let c = 0; for (const k of list) c += subH(k) + V_GAP; return list.length ? c - V_GAP : 0; };
+  const groupWidth = (list) => { let c = 0; for (const k of list) c += subW(k) + H_GAP; return list.length ? c - H_GAP : 0; };
+  const dirFor = (side) => (side === "left" ? -1 : 1);
+
+  // 向外范式：递归设定 y（父在子代间垂直居中）
+  const placeY = (node, top, kids) => {
+    const list = kids || (cm.get(node.id) || []);
+    const h = getH(node);
+    if (!list.length) { node.y = top; return h; }
+    let cursor = top;
+    for (const k of list) { const kh = placeY(k, cursor, cm.get(k.id)); cursor += kh + V_GAP; }
+    const total = cursor - V_GAP - top;
+    const first = list[0], last = list[list.length - 1];
+    node.y = (first.y + (last.y + getH(last))) / 2 - h / 2;
+    return total;
+  };
+  // 向外范式：递归设定 x（子节点沿父节点一侧延伸，标注 side）
+  const placeX = (node, x, dir, kids) => {
+    node.x = x;
+    const list = kids || (cm.get(node.id) || []);
+    const step = getW(node) + H_GAP;
+    for (const k of list) { k.side = dir > 0 ? "right" : "left"; placeX(k, dir > 0 ? x + step : x - getW(k) - H_GAP, dir, cm.get(k.id)); }
+  };
+  // 向下范式（structure 布局）：以 centerX 为父节点水平中心向下铺开，父节点在子节点之间水平居中
+  const placeDown = (node, centerX, top) => {
+    node.x = centerX - getW(node) / 2;
+    node.y = top;
+    const kids = cm.get(node.id) || [];
+    if (!kids.length) return;
+    const total = groupWidth(kids);
+    let left = centerX - total / 2;
+    for (const k of kids) { placeDown(k, left + subW(k) / 2, top + getH(node) + V_GAP); left += subW(k) + H_GAP; }
+  };
+
+  // 重排某节点的可见子树：锚定该节点当前位置，子节点按 side 向外延伸并垂直居中
+  const layoutSubtree = (node) => {
+    const kids = cm.get(node.id) || [];
+    if (!kids.length) return;
+    if (layout === "structure") {
+      let cursor = node.y + getH(node) + V_GAP;
+      for (const k of kids) { placeDownY(k, cursor, cm.get(k.id)); cursor += subH(k) + V_GAP; }
+      const first = kids[0], last = kids[kids.length - 1];
+      node.x = (first.x + (last.x + getW(last))) / 2 - getW(node) / 2;
+    } else {
+      // 缺 side 的子节点按子树高度贪心分到两侧，保持平衡；已有 side 的保留（不翻面，尊重手动/历史安排）
+      const noSide = kids.filter((k) => k.side !== "left" && k.side !== "right" && k.side !== "down");
+      if (noSide.length) {
+        const sorted = [...noSide].sort((a, b) => subH(b) - subH(a));
+        let lh = 0, rh = 0;
+        for (const k of sorted) { if (lh <= rh) { k.side = "left"; lh += subH(k) + V_GAP; } else { k.side = "right"; rh += subH(k) + V_GAP; } }
+      }
+      const total = groupHeight(kids);
+      let top = node.y - total / 2;
+      for (const k of kids) { placeY(k, top, cm.get(k.id)); top += subH(k) + V_GAP; }
+      for (const k of kids) {
+        placeX(k, k.side === "left" ? node.x - getW(k) - H_GAP : node.x + getW(node) + H_GAP, dirFor(k.side === "left" ? "left" : "right"), cm.get(k.id));
+      }
+      const first = kids[0], last = kids[kids.length - 1];
+      node.y = (first.y + (last.y + getH(last))) / 2 - getH(node) / 2;
+    }
+  };
+
+  // 整棵子树连同后代一起平移（用于推开重叠的兄弟子树）
+  const shiftSubtree = (node, dy) => {
+    node.y += dy;
+    for (const c of cm.get(node.id) || []) shiftSubtree(c, dy);
+  };
+  // 同级之间纵向收敛：以最上方兄弟为锚向下紧排，消除空隙与重叠（收起时空隙被回收、展开时下方兄弟下移让位）；
+  // 随后父节点在子节点之间重新居中（仅调父节点 y，不带动子节点，进一步贴近平衡）
+  const resolveSiblings = (parent) => {
+    const kids = cm.get(parent.id) || [];
+    if (kids.length >= 2) {
+      const sorted = [...kids].sort((a, b) => a.y - b.y);
+      let cursor = sorted[0].y;
+      for (const k of sorted) {
+        const dy = cursor - k.y;
+        if (dy !== 0) shiftSubtree(k, dy);
+        cursor += subH(k) + V_GAP;
+      }
+    }
+    const list = cm.get(parent.id) || [];
+    if (list.length) {
+      const first = list[0], last = list[list.length - 1];
+      parent.y = (first.y + (last.y + getH(last))) / 2 - getH(parent) / 2;
+    }
+  };
+
+  const focus = focusId ? nodeById(focusId) : (nodes.find((n) => n.parentId == null) || null);
+  if (!focus) return;
+  layoutSubtree(focus);
+  // 沿祖先链向上：每级收敛兄弟子树并重新居中父节点，使变化向上传播但不波及无关分支
+  let cur = focus;
+  while (cur && cur.parentId != null && idSet.has(cur.parentId) && !hidden.has(cur.parentId)) {
+    const parent = nodeById(cur.parentId);
+    if (!parent) break;
+    resolveSiblings(parent);
+    cur = parent;
+  }
+}
+
 // 全部节点（按脑图尺寸）的包围盒中心
 function bboxCenter(nodes) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
