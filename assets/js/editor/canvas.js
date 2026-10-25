@@ -1363,6 +1363,21 @@ export class Editor {
     }
     return null;
   }
+  // 节点松手后按「实际落点相对父节点的位置」应属哪一侧（与布局纠偏规则保持一致：
+  // 超过父宽一半 + 24px 才算越侧，避免正常抖动被误判）。列表 / 逻辑布局的侧是固定的。
+  _sideByPosition(n) {
+    const layout = this.doc.layout || "mindmap";
+    if (layout === "logicLeft") return "left";
+    if (layout === "logicRight" || layout === "list") return "right";
+    const p = n && n.parentId != null ? this.nodeById(n.parentId) : null;
+    if (!p) return "right";
+    const ps = this.sizes.get(p.id) || sizeOf(p, "mindmap");
+    const ns = this.sizes.get(n.id) || sizeOf(n, "mindmap");
+    const pc = p.x + ps.w / 2, nc = n.x + ns.w / 2, half = ps.w / 2 + 24;
+    if (nc < pc - half) return "left";
+    if (nc > pc + half) return "right";
+    return n.side === "left" ? "left" : n.side === "down" ? "down" : "right";
+  }
   // 拖拽落点意图判定（脑图）：返回 { target, side, mode }
   // 关键区分（左右双侧布局 mindmap / elbow）：
   //  · 越过某个节点换到另一侧（左侧节点拖回右侧）时，即使落点压在路上挡着的兄弟节点身上，
@@ -1390,23 +1405,29 @@ export class Editor {
     };
     const root = this.doc.nodes.find((n) => n.parentId == null);
     const rootUsable = root && root.id !== dn.id && !this.descendants(dn.id).has(root.id);
-    // ① 越侧且落在根节点侧边带 -> 成为根节点该侧分支
-    if (twoSided && rootUsable && crossed(root.id) && inBand(root.id)) {
-      return { target: root.id, side: sideOfPoint(root.id, cx), mode: "root" };
-    }
-    // ② 越侧且落在自己父节点的侧边带 -> 同一父节点下换到这一侧（不受挡路的兄弟节点影响）
     const par = dn.parentId != null ? this.nodeById(dn.parentId) : null;
-    if (twoSided && par && crossed(par.id) && inBand(par.id)) {
+    // ① 越侧 = 明确的「换到这一侧」意图。判据只看有没有越过中轴，不再限制横向距离 ——
+    //    换到对面后落点往往离中轴很远（左侧分支本来就在远处），旧版按 260px 判定会失效，
+    //    失效后落点又压在对面已有节点上，就被判成「成为那个节点的子节点」，表现就是「拖不到左侧」。
+    if (twoSided && (rootUsable && crossed(root.id) || par && crossed(par.id))) {
+      // 例外：精准按在「另一侧其他分支的节点」身上（不是同级兄弟、也不是根节点）→ 仍挂为其子节点
+      const inside = this._nodeInsidePoint(cx, cy, dn.id, 0);
+      if (inside && !(root && root.id === inside)) {
+        const inNode = this.nodeById(inside);
+        const sameLevel = par && inNode && inNode.parentId === par.id;
+        if (!sameLevel) return { target: inside, side: sideOfPoint(inside, cx), mode: "child" };
+      }
+      if (rootUsable && crossed(root.id)) return { target: root.id, side: sideOfPoint(root.id, cx), mode: "root" };
       return { target: par.id, side: sideOfPoint(par.id, cx), mode: "side" };
     }
-    // ③ 压到某个节点身上 -> 成为其子节点
+    // ② 压到某个节点身上 -> 成为其子节点
     const inside = this._nodeInsidePoint(cx, cy, dn.id);
     if (inside) return { target: inside, side: sideOfPoint(inside, cx), mode: "child" };
-    // ④ 拖到根节点侧面空白区 -> 成为根节点该侧分支（不用先叠到根上）
+    // ③ 拖到根节点侧面空白区 -> 成为根节点该侧分支（不用先叠到根上）
     if (rootUsable && layout !== "structure" && inBand(root.id)) {
       return { target: root.id, side: sideOfPoint(root.id, cx), mode: "root" };
     }
-    // ⑤ 邻近吸附兜底
+    // ④ 邻近吸附兜底
     const near = this._nodeAtPoint(cx, cy, dn.id);
     if (near) return { target: near, side: sideOfPoint(near, cx), mode: "child" };
     return null;
@@ -2094,21 +2115,30 @@ export class Editor {
       const target = info ? info.target : null;
       // 脑图：拖到另一节点上 -> 成为其子节点（含整棵子树搬移），自动吸附到左/右
       if (nd0 && target && target !== dragId) {
-        this._dragSide = this.doc.layout === "structure" ? null : info.side; // 供 _reparentNode 定 side
+        const oldParentId = nd0.parentId;
+        const oldSide = this._sideByPosition(nd0);
+        const newSide = this.doc.layout === "structure" ? null : info.side;
+        this._dragSide = newSide;                    // 供 _reparentNode 定 side
         const ok = this._reparentNode(dragId, target);
         this._dragSide = null;
         if (ok) {
           this._drag = null;
-          if (this.autoAdjust) adaptMindmap(this.doc);          // 整图局部收敛：同时排好新父子树并回收原父空隙
-          else if (this.autoRelayout) layoutMindmap(this.doc);
+          if (this.autoAdjust) {
+            adaptMindmap(this.doc, target, newSide || undefined);   // 新父：只排吸附的那一侧
+            // 旧父：回收空出来的位置（只排原来那一侧，对侧不动；组织结构图不分左右，整体收敛）
+            const oldHint = (this.doc.layout || "mindmap") === "structure" ? undefined : oldSide;
+            if (oldParentId != null && oldParentId !== target) adaptMindmap(this.doc, oldParentId, oldHint);
+          } else if (this.autoRelayout) layoutMindmap(this.doc);
           this.render(); this.onChange(); this.pushHistory();
           return;
         }
       }
-      // 脑图：拖完松手后自动吸附——节点被拖到父节点的另一侧（例如根节点左边）时，
-      // 纠正 side 并吸附到该侧的正确位置，而不是停在拖放处或对面
-      if (nd0 && this.doc.type === "mindmap" && this.autoAdjust) {
-        if (nd0.parentId != null) adaptMindmap(this.doc, nd0.parentId);
+      // 脑图：松手后自动吸附——按节点落点所在的一侧纠正 side 并局部重排到该侧
+      // （只排该侧，对侧与无关分支纹丝不动）；autoAdjust 关闭时保留手动摆放的位置
+      if (nd0 && this.doc.type === "mindmap" && this.autoAdjust && nd0.parentId != null) {
+        const layout = this.doc.layout || "mindmap";
+        if (layout !== "structure") nd0.side = this._sideByPosition(nd0);
+        adaptMindmap(this.doc, nd0.parentId, nd0.side === "down" ? undefined : nd0.side);
       }
       if (moved) { this.onChange(); this.pushHistory(); }
       this._drag = null;
