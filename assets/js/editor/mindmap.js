@@ -235,7 +235,9 @@ export function layoutMindmap(doc, layout) {
 // focusId：发生结构变化的根节点（其可见子树被重排）；缺省则对整个可见树做局部收敛。
 // sideHint：本次结构变化发生在哪一侧（left/right）。双侧脑图（根节点左右都有分支）时，
 // 只重排该侧并以父节点为轴垂直居中，对侧分支保持原样 —— 否则收起左侧会连右侧一起搬动。
-export function adaptMindmap(doc, focusId, sideHint) {
+// anchorId：拖放落点结算用。传入被拖节点 id 时，该节点保持落点纵向位置（横向吸附到该侧
+// 分支列），只把下方兄弟整体向下让开；上方兄弟与父节点都不动（拖动的位置由用户决定）。
+export function adaptMindmap(doc, focusId, sideHint, anchorId) {
   const nodes = doc.nodes || [];
   if (!nodes.length) return;
   // 坐标防护：旧数据 / 导入异常导致的 NaN 先归零，避免计算扩散成 NaN
@@ -278,11 +280,14 @@ export function adaptMindmap(doc, focusId, sideHint) {
     return Math.max(getW(node), s - H_GAP);
   };
   // 外框内距：外框以成员包围盒为基准外扩（canvas 侧 PAD=14，带标题时顶边 24）。
-  // 纵向让位时把这层内距一并算作「上方分支的占用」，否则展开的子树会压在外框边框上
-  const framePad = new Map(); // nodeId -> { t, b }
+  // 纵向让位时把这层内距一并算作「上方分支的占用」，否则展开的子树会压在外框边框上。
+  // 注意只算在框的【最上 / 最下】那个成员上：框是一个整体矩形，中间成员之间没有额外内距，
+  // 若每个成员都加，组内间距会被逐级撑大（16 变成 30、44…），整体下移就不再等量。
+  const frameGrp = new Map(); // nodeId -> { ids, t, b }
   for (const g of doc.groups || []) {
     if (!g || g.kind !== "frame" || !Array.isArray(g.ids)) continue;
-    for (const id of g.ids) framePad.set(id, { t: g.text ? 24 : 14, b: 14 });
+    const fp = { ids: g.ids, t: g.text ? 24 : 14, b: 14 };
+    for (const id of g.ids) frameGrp.set(id, fp);
   }
   // 可见子树的真实包围盒（含自身与全部可见后代）：节点展开后子节点会围绕它向上 / 向下扩张，
   // 纵向紧排必须按实际占用计算，否则按 h 估算会漏掉向上溢出的那一块，造成上下遮挡
@@ -295,8 +300,20 @@ export function adaptMindmap(doc, focusId, sideHint) {
       if (b.left < left) left = b.left;
       if (b.right > right) right = b.right;
     }
-    const fp = framePad.get(node.id);
-    if (fp) { top -= fp.t; bot += fp.b; } // 外框占用的实际上下边界
+    const fg = frameGrp.get(node.id);
+    if (fg) {
+      // 只有当前位于框最上 / 最下的成员承担内距（框是整块矩形，中间成员无额外间距）
+      let topmost = true, botmost = true;
+      for (const id of fg.ids) {
+        if (id === node.id) continue;
+        const m = nodeById(id);
+        if (!m || hidden.has(id)) continue;
+        if (m.y < node.y) topmost = false;
+        if (m.y + getH(m) > node.y + getH(node)) botmost = false;
+      }
+      if (topmost) top -= fg.t;
+      if (botmost) bot += fg.b;
+    }
     return { top, bot, left, right };
   };
   const groupHeight = (list) => { let c = 0; for (const k of list) c += subH(k) + V_GAP; return list.length ? c - V_GAP : 0; };
@@ -405,12 +422,17 @@ export function adaptMindmap(doc, focusId, sideHint) {
     node.y += dy;
     for (const c of cm.get(node.id) || []) shiftSubtree(c, dy);
   };
+  // 整棵子树连同后代一起横向平移（拖放落点吸附到该侧分支列）
+  const shiftSubtreeX = (node, dx) => {
+    node.x += dx;
+    for (const c of cm.get(node.id) || []) shiftSubtreeX(c, dx);
+  };
   // 同级之间纵向收敛：以「路径节点」(发生变化的那一支) 为锚，仅向下紧排其下方兄弟——
   // 上方兄弟与路径节点保持原位，下方兄弟按需要上移（收起时空隙被回收）或下移（展开/增删时让位），
   // 从而既消除重叠又绝不搬动无关节点；随后父节点在子节点之间重新居中（仅调父节点 y，不动子节点）。
   // 占用高度按子树的真实包围盒计算：展开节点时子节点会围绕它向上扩张，向上溢出撞到上方兄弟时
   // 把「该节点 + 其整棵子树」一起下移让位（而不是把上方节点搬走）
-  const resolveSiblings = (parent, pathNode) => {
+  const resolveSiblings = (parent, pathNode, keepParent, downOnly) => {
     const all = cm.get(parent.id) || [];
     if (!all.length) return;
     // 双侧父节点（左右都有分支）：只收敛 pathNode 所在那一侧，对侧与父节点纹丝不动
@@ -427,19 +449,25 @@ export function adaptMindmap(doc, focusId, sideHint) {
         if (b.bot > cursor) cursor = b.bot;
       }
       if (Number.isFinite(cursor)) cursor += V_GAP;
+      let uniform = null;   // downOnly：锚点下方所有兄弟等量下移（保持彼此间距，"整体"让开）
       for (let i = start; i < sorted.length; i++) {
         const k = sorted[i];
         const box = subBox(k);
         // 路径节点：只在下移方向让位，绝不因上方空隙被上拉（避免无谓搬动）；
-        // 其下方兄弟：可上移回收空隙，也可下移让位
-        const dy = i === start
-          ? (Number.isFinite(cursor) ? Math.max(0, cursor - box.top) : 0)
-          : cursor - box.top;
+        // 其下方兄弟：可上移回收空隙，也可下移让位；
+        // downOnly（拖放落点）：一律只下移，且锚点下方整组等量下移 —— 用户把节点放在这个高度，
+        // 不能把下面的节点反过来吸上去，也不能把它们之间的间距压缩掉。
+        let dy;
+        if (i === start) dy = Number.isFinite(cursor) ? Math.max(0, cursor - box.top) : 0;
+        else if (downOnly) {
+          if (uniform == null) uniform = Math.max(0, cursor - box.top);
+          dy = uniform;
+        } else dy = cursor - box.top;
         if (dy !== 0) shiftSubtree(k, dy);
         cursor = box.bot + dy + V_GAP;
       }
     }
-    if (multi) return; // 双侧父节点：对侧分支与父节点都不动
+    if (multi || keepParent) return; // 双侧父节点 / 拖放落点：对侧分支与父节点都不动
     const list = cm.get(parent.id) || [];
     if (list.length) {
       let top = Infinity, bot = -Infinity;
@@ -450,8 +478,33 @@ export function adaptMindmap(doc, focusId, sideHint) {
 
   const focus = focusId ? nodeById(focusId) : (nodes.find((n) => n.parentId == null) || null);
   if (!focus) return;
-  // 本次变化发生在哪一侧：显式 hint 优先；否则用方位纠偏的结果（节点被摆到父节点另一侧）
-  layoutSubtree(focus, sideHint || sideChanged.get(focus.id) || undefined);
+  // 拖放落点结算（anchorId）：被拖的节点【停在落点】而不是被整侧重排——
+  // 把它横向吸附到该侧分支列，纵向只把下方兄弟整体向下让开，上方节点纹丝不动。
+  // 这是「拖动节点过去」与「结构变化后自动整理」的区别：前者位置由用户决定。
+  const anchor = anchorId && layout !== "structure" ? nodeById(anchorId) : null;
+  if (anchor && anchor.id !== focus.id && anchor.parentId === focus.id && !hidden.has(anchor.id)) {
+    const side = (sideHint === "left" || sideHint === "right") ? sideHint : (sideOf(anchor) === "left" ? "left" : "right");
+    const sibs = (cm.get(focus.id) || []).filter((k) => k.id !== anchor.id && sideOf(k) === side);
+    let col;
+    if (sibs.length) {
+      // 同侧已有分支的列（手动布局下同侧可能不齐，取纵向最近的那个兄弟所在列）
+      const ac = anchor.y + getH(anchor) / 2;
+      let best = sibs[0], bd = Infinity;
+      for (const k of sibs) {
+        const d = Math.abs(k.y + getH(k) / 2 - ac);
+        if (d < bd) { bd = d; best = k; }
+      }
+      col = best.x;
+    } else {
+      col = side === "left" ? focus.x - getW(anchor) - H_GAP : focus.x + getW(focus) + H_GAP;
+    }
+    const dx = col - anchor.x;
+    if (Math.abs(dx) > 0.5) shiftSubtreeX(anchor, dx);
+    resolveSiblings(focus, anchor, true, true);
+  } else {
+    // 本次变化发生在哪一侧：显式 hint 优先；否则用方位纠偏的结果（节点被摆到父节点另一侧）
+    layoutSubtree(focus, sideHint || sideChanged.get(focus.id) || undefined);
+  }
   // 沿祖先链向上：每级收敛兄弟子树并重新居中父节点，使变化向上传播但不波及无关分支
   // structure 布局的兄弟是横向并排，纵向收敛会错位，故仅对非 structure 做祖先传播
   if (layout === "structure") return;

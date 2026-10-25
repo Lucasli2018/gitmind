@@ -1433,6 +1433,20 @@ export class Editor {
     return null;
   }
 
+  // 拖放落点结算（脑图）：被拖节点【停在落点】，只把该侧下方兄弟整体向下让开；
+  // 父节点与上方兄弟不动。旧父变了才回收空出的位置（只排原来那一侧）。
+  // 注意与 adaptMindmap(doc, parentId, side) 的区别：后者会把整侧重排（等于搬动无关节点），
+  // 拖动这种「位置由用户决定」的操作必须走 anchor 版本。
+  _settleDrop(nd, parentId, side, oldParentId, oldSide) {
+    if (!nd || parentId == null) return;
+    const layout = this.doc.layout || "mindmap";
+    const hint = layout === "structure" ? undefined : (side === "left" || side === "right" ? side : undefined);
+    adaptMindmap(this.doc, parentId, hint, layout === "structure" ? null : nd.id);
+    if (oldParentId != null && oldParentId !== parentId) {
+      adaptMindmap(this.doc, oldParentId, layout === "structure" ? undefined : oldSide);
+    }
+  }
+
   // 将 fromId 挂到 toId 之下成为其子节点；按落点相对目标中心的方位自动设定 side
   // （直角 / 逻辑 / 经典布局：偏左 -> left，偏右 -> right；组织结构图：偏上 -> up，偏下 -> down），并做防环校验。
   // 返回是否真的改变了父子关系
@@ -2113,35 +2127,35 @@ export class Editor {
         info = this._dragSnapAt(nd0, nd0.x + s0.w / 2, nd0.y + s0.h / 2);
       }
       const target = info ? info.target : null;
+      let settled = false;
       // 脑图：拖到另一节点上 -> 成为其子节点（含整棵子树搬移），自动吸附到左/右
       if (nd0 && target && target !== dragId) {
         const oldParentId = nd0.parentId;
         const oldSide = this._sideByPosition(nd0);
         const newSide = this.doc.layout === "structure" ? null : info.side;
         this._dragSide = newSide;                    // 供 _reparentNode 定 side
-        const ok = this._reparentNode(dragId, target);
+        const reparented = this._reparentNode(dragId, target);
         this._dragSide = null;
-        if (ok) {
-          this._drag = null;
-          if (this.autoAdjust) {
-            adaptMindmap(this.doc, target, newSide || undefined);   // 新父：只排吸附的那一侧
-            // 旧父：回收空出来的位置（只排原来那一侧，对侧不动；组织结构图不分左右，整体收敛）
-            const oldHint = (this.doc.layout || "mindmap") === "structure" ? undefined : oldSide;
-            if (oldParentId != null && oldParentId !== target) adaptMindmap(this.doc, oldParentId, oldHint);
-          } else if (this.autoRelayout) layoutMindmap(this.doc);
-          this.render(); this.onChange(); this.pushHistory();
-          return;
+        if (reparented) {
+          settled = true;
+          if (this.autoAdjust) this._settleDrop(nd0, target, newSide, oldParentId, oldSide);
+          else if (this.autoRelayout) layoutMindmap(this.doc);
         }
       }
-      // 脑图：松手后自动吸附——按节点落点所在的一侧纠正 side 并局部重排到该侧
-      // （只排该侧，对侧与无关分支纹丝不动）；autoAdjust 关闭时保留手动摆放的位置
-      if (nd0 && this.doc.type === "mindmap" && this.autoAdjust && nd0.parentId != null) {
+      // 同一父节点内换侧（左侧节点拖回右侧 / 右侧拖到左侧）：父节点没变，
+      // _reparentNode 会返回 false，必须在这里自己纠正 side 并结算落点 ——
+      // 否则模型虽然改了，但既不重排也不重绘，表现就是「怎么拖都过不去」。
+      if (!settled && nd0 && this.doc.type === "mindmap" && nd0.parentId != null) {
         const layout = this.doc.layout || "mindmap";
         if (layout !== "structure") nd0.side = this._sideByPosition(nd0);
-        adaptMindmap(this.doc, nd0.parentId, nd0.side === "down" ? undefined : nd0.side);
+        if (this.autoAdjust) {
+          this._settleDrop(nd0, nd0.parentId, layout === "structure" ? null : nd0.side, null, null);
+        } else if (this.autoRelayout) layoutMindmap(this.doc);
       }
-      if (moved) { this.onChange(); this.pushHistory(); }
+      // 先清掉拖拽态再重绘：render 里的外框避让只在非拖拽时生效，
+      // 松手这一刻必须让它跑（否则外框会压着刚放下的节点）。
       this._drag = null;
+      if (moved) { this.render(); this.onChange(); this.pushHistory(); }
       // 单击图片（未拖动）-> 放大查看；拖动则正常移动节点
       if (!moved && this._pendingImgZoom) {
         const src = this._pendingImgZoom; this._pendingImgZoom = null;
