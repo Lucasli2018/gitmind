@@ -26,7 +26,7 @@ export class Editor {
     this.view = this.doc.view;
     this.selection = new Set();
     this.sizes = new Map();
-    this._drag = null; this._pan = null; this._connect = null; this._stroke = null;
+    this._drag = null; this._pan = null; this._connect = null; this._stroke = null; this._dragTarget = null;
     this._pinch = null;
     this._rmbLastDown = 0;                       // 右键上次按下时间（双击检测：右键双击切换抓手工具）
     this._rmbDblAt = 0;                          // 右键双击发生时间（contextmenu 抑制菜单用）
@@ -545,6 +545,10 @@ export class Editor {
     if (this.tool === "link" && (this._linkHover === n.id || this._connectHover === n.id) && !this._forExport) {
       inner += `<rect x="-8" y="-8" width="${w + 16}" height="${h + 16}" rx="16" fill="none" stroke="#ff9f43" stroke-width="2.5" stroke-dasharray="7 5"/>`;
     }
+    // 脑图：节点拖拽中，可吸附为子节点的目标节点高亮（青色虚线框 + 淡底）
+    if (this.mode === "mindmap" && this._dragTarget === n.id && !this._forExport) {
+      inner += `<rect x="-8" y="-8" width="${w + 16}" height="${h + 16}" rx="16" fill="rgba(17,181,164,0.10)" stroke="#11b5a4" stroke-width="2.5" stroke-dasharray="7 5"/>`;
+    }
     // 白板：选中元素的自由变换手柄
     if (selected && this.mode === "whiteboard" && !this._forExport) {
       if (n.shape === "line" || n.shape === "arrow") {
@@ -596,7 +600,8 @@ export class Editor {
   // 取消自动重排后节点可被随意拖动，几何方向才可靠）
   // 直角布局（直角导图 / 目录组织）统一从右侧接出：所有子节点连线同侧、共用一条主干
   _mmSide(a, sa, b, sb) {
-    if (this.doc.layout === "list" || this.doc.layout === "elbow") return "right";
+    if (this.doc.layout === "list") return "right";                  // 目录缩进：始终从右侧接出
+    if (this.doc.layout === "elbow") return b.side === "left" ? "left" : "right"; // 直角导图：尊重节点 side（拖到左侧即 left）
     const acx = a.x + sa.w / 2, acy = a.y + sa.h / 2, bcx = b.x + sb.w / 2, bcy = b.y + sb.h / 2;
     const dx = bcx - acx, dy = bcy - acy;
     if (Math.abs(dy) > Math.abs(dx)) return dy >= 0 ? "down" : "up";
@@ -727,7 +732,19 @@ export class Editor {
     return Math.max(28, Math.min(280, w + 16));
   }
 
-  // 连线避障：其它可见节点的包围盒（排除两端节点），用于判断连线是否压住节点
+  // 按最大宽度截断文本（超出补省略号）：用于不允许溢出/撑宽容器的标题
+  _clipLabel(text, maxW) {
+    const s = String(text || "");
+    if (this._labelWidth(s) <= maxW || maxW < 40) return maxW < 40 ? "…" : s;
+    let lo = 1, hi = s.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (this._labelWidth(s.slice(0, mid) + "…") <= maxW) lo = mid; else hi = mid - 1;
+    }
+    return s.slice(0, lo) + "…";
+  }
+
+
   _edgeObstacles(exA, exB, region) {
     const hidden = this.hiddenNodes();
     const out = [];
@@ -1089,19 +1106,32 @@ export class Editor {
       maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
     }
     if (minX === Infinity) return "";
-    const pad = 14;
+    // 障碍集合：成员及其后代都不算障碍（后代本就紧贴外框边缘），只躲真正无关的节点
+    const excl = new Set();
+    for (const m of members) { excl.add(m.id); for (const d of this.descendants(m.id)) excl.add(d); }
+    const obstacles = this._obstacles(excl, 4);
+    const W = maxX - minX, H = maxY - minY;
+    // 四边各自向外扩 PAD；某条边带一旦会压到无关节点就收缩（最小 0）—— 外框绝不覆盖别的节点
+    const PAD = 14;
+    const fitPad = (band) => {
+      for (let p = PAD; p > 0; p -= 2) if (!this._rectHitAny(band(p), obstacles)) return p;
+      return 0;
+    };
+    const pl = fitPad((p) => ({ x: minX - p, y: minY, w: p, h: H }));
+    const pr = fitPad((p) => ({ x: maxX, y: minY, w: p, h: H }));
+    const pt = fitPad((p) => ({ x: minX - pl, y: minY - p, w: W + pl + pr, h: p }));
+    const pb = fitPad((p) => ({ x: minX - pl, y: maxY, w: W + pl + pr, h: p }));
     const col = sel ? "#11b5a4" : (g.stroke || "#aab3bf");
-    const box = { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
+    const box = { x: minX - pl, y: minY - pt, w: W + pl + pr, h: H + pt + pb };
     const title = g.text ? String(g.text) : "";
     // 标题自动避让：优先用框顶预留带（框向上扩 TH，标题落在带内左上），被节点占用时在带内向右平移；
     // 整条带都被占则改用框底预留带；两处都占才回落到框顶——无论如何都不会压住框内成员节点
-    let r = box, labelX = box.x + 10, labelY = 0;
+    let r = box, labelX = box.x + 10, labelY = 0, drawTitle = title;
     if (title) {
       const tw = Math.min(320, this._labelWidth(title) + 6);
       const TH = 24;
-      const obstacles = this._obstacles(new Set(members.map((m) => m.id)), 4);
       const topR = { x: box.x, y: box.y - TH, w: box.w, h: box.h + TH };
-      const botR = { x: box.x, y: box.y, w: Math.max(box.w, 10 + tw + 18), h: box.h + TH };
+      const botR = { x: box.x, y: box.y, w: box.w, h: box.h + TH };
       const topBandY = box.y - TH + 3;
       const botBandY = box.y + box.h + 3;
       // 在带内沿水平方向找空位（步进 16px）
@@ -1116,12 +1146,22 @@ export class Editor {
       if (topX !== null) { r = topR; labelX = topX; labelY = topBandY + 14; }
       else if (botX !== null) { r = botR; labelX = botX; labelY = botBandY + 14; }
       else { r = topR; labelX = box.x + 10; labelY = topBandY + 14; }
-      // 标题比框宽时把框向右扩，避免标题溢出框外
+      // 标题比框宽时：只向左扩（且沿途不压无关节点），扩不动就把标题截断加省略号
+      // —— 绝不像旧版那样向右撑宽外框，否则会盖住右侧相邻节点
       const needW = labelX + tw + 8;
-      if (r.x + r.w < needW) r.w = needW - r.x;
+      if (r.x + r.w < needW) {
+        const need = Math.min(240, needW - (r.x + r.w));
+        let grow = 0;
+        for (let d = 8; d <= need; d += 8) {
+          if (this._rectHitAny({ x: r.x - d, y: r.y, w: d, h: r.h }, obstacles)) break;
+          grow = d;
+        }
+        if (grow > 0) { r = { x: r.x - grow, y: r.y, w: r.w + grow, h: r.h }; labelX -= grow; }
+        if (r.x + r.w < needW) drawTitle = this._clipLabel(title, Math.max(40, r.x + r.w - labelX - 8));
+      }
     }
     const titleEl = title
-      ? `<text x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" font-size="14" font-weight="600" fill="${col}" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(title)}</text>`
+      ? `<text x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" font-size="14" font-weight="600" fill="${col}" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(drawTitle)}</text>`
       : "";
     return `<g class="gm-group gm-frame" data-g="${g.id}">` +
       `<rect x="${r.x.toFixed(1)}" y="${r.y.toFixed(1)}" width="${r.w.toFixed(1)}" height="${r.h.toFixed(1)}" rx="12" fill="${col}14" stroke="${col}" stroke-width="${sel ? 2.5 : 1.8}" stroke-dasharray="7 5"/>` + titleEl + `</g>`;
@@ -1200,6 +1240,43 @@ export class Editor {
     const cm = this.childrenMap();
     for (const c of cm.get(id) || []) { set.add(c); this.descendants(c, set); }
     return set;
+  }
+
+  // 拖拽落点判定：在 (wx,wy) 附近（容差内）且非 excludeId 及其后代的节点；
+  // 用于「把节点拖到另一节点上 -> 成为其子节点」，排除自身与后代避免成环 / 无意义
+  _nodeAtPoint(wx, wy, excludeId, tol = 28) {
+    if (excludeId == null) return null;
+    const blocked = new Set([excludeId, ...this.descendants(excludeId)]);
+    let best = null, bestD = Infinity;
+    for (const n of this.doc.nodes) {
+      if (blocked.has(n.id)) continue;
+      const b = this.nodeBBox(n);
+      const dx = Math.max(b.x - wx, 0, wx - (b.x + b.w));
+      const dy = Math.max(b.y - wy, 0, wy - (b.y + b.h));
+      const d = Math.hypot(dx, dy);
+      if (d <= tol && d < bestD) { bestD = d; best = n.id; }
+    }
+    return best;
+  }
+
+  // 将 fromId 挂到 toId 之下成为其子节点；按落点相对目标中心的方位自动设定 side
+  // （直角 / 逻辑 / 经典布局：偏左 -> left，偏右 -> right；组织结构图：偏上 -> up，偏下 -> down），并做防环校验。
+  // 返回是否真的改变了父子关系
+  _reparentNode(fromId, toId) {
+    const from = this.nodeById(fromId), to = this.nodeById(toId);
+    if (!from || !to || fromId === toId) return false;
+    if (this.descendants(fromId).has(toId)) return false;   // 不能把节点挂到自己的后代之下（成环）
+    if (from.parentId === toId) return false;               // 已是子节点，无变化
+    from.parentId = toId;
+    const sf = this.sizes.get(from.id) || sizeOf(from, "mindmap");
+    const st = this.sizes.get(to.id) || sizeOf(to, "mindmap");
+    const fcx = from.x + sf.w / 2, fcy = from.y + sf.h / 2;
+    const tcx = to.x + st.w / 2, tcy = to.y + st.h / 2;
+    const layout = this.doc.layout;
+    if (layout === "structure") from.side = fcy >= tcy ? "down" : "up";
+    else if (layout === "list") from.side = "right";
+    else from.side = fcx < tcx ? "left" : "right";          // elbow/mindmap/logic*/：落点偏左自动吸附到左边
+    return true;
   }
 
   // ---------- 选择 ----------
@@ -1550,7 +1627,7 @@ export class Editor {
       const movable = this.getMovable(this.selection);
       const orig = {};
       movable.forEach((mid) => { const nd = this.nodeById(mid); orig[mid] = { x: nd.x, y: nd.y }; });
-      this._drag = { sx, sy, moved: false, orig, movable };
+      this._drag = { sx, sy, moved: false, orig, movable, id };
       return;
     }
     // 空白：选择工具下左键拖拽框选多个元素（脑图 / 流程图 / 白板通用）；
@@ -1719,6 +1796,13 @@ export class Editor {
         const nd = this.nodeById(mid); const o = this._drag.orig[mid];
         if (nd && o) { nd.x = o.x + dx; nd.y = o.y + dy; }
       }
+      // 脑图：拖拽中实时高亮可吸附为子节点的目标（落点附近、非自身及后代）
+      if (this.mode === "mindmap") {
+        const did = this._drag.id; const dn = did ? this.nodeById(did) : null;
+        let t = null;
+        if (dn) { const sd = this.sizes.get(dn.id) || sizeOf(dn, "mindmap"); t = this._nodeAtPoint(dn.x + sd.w / 2, dn.y + sd.h / 2, did); }
+        this._dragTarget = t;
+      }
       this.render();
       return;
     }
@@ -1832,6 +1916,21 @@ export class Editor {
     }
     if (this._drag) {
       const moved = this._drag.moved;
+      const dragId = this._drag.id;
+      const target = this._dragTarget;
+      this._dragTarget = null;
+      // 脑图：拖到另一节点上 -> 成为其子节点（含整棵子树搬移），自动吸附到左/右
+      if (moved && dragId && target && target !== dragId) {
+        const nd = this.nodeById(dragId);
+        const ok = nd && this._reparentNode(dragId, target);
+        if (ok) {
+          this._drag = null;
+          if (this.autoAdjust) adaptMindmap(this.doc);          // 整图局部收敛：同时排好新父子树并回收原父空隙
+          else if (this.autoRelayout) layoutMindmap(this.doc);
+          this.render(); this.onChange(); this.pushHistory();
+          return;
+        }
+      }
       if (moved) { this.onChange(); this.pushHistory(); }
       this._drag = null;
       // 单击图片（未拖动）-> 放大查看；拖动则正常移动节点

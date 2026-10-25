@@ -136,9 +136,15 @@ export function layoutMindmap(doc, layout) {
       placeY(root, baseY);
 
     } else if (layout === "elbow") {
-      // 直角导图：所有子节点排在右侧（连线同侧、共用一条主干），布局同 logicRight
-      placeX(root, baseX, +1);
-      placeY(root, baseY);
+      // 直角导图：尊重节点 side（left/right），无 side 默认右侧（向后兼容旧数据）；
+      // 根节点左右两侧都能挂载分支，拖到左侧的节点自动归 left 并吸附到左边
+      const direct = childrenMap.get(root.id) || [];
+      const leftG = direct.filter((k) => k.side === "left");
+      const rightG = direct.filter((k) => k.side !== "left");
+      const rh0 = groupHeight(rightG), lh0 = groupHeight(leftG);
+      root.y = Math.max(rh0, lh0) / 2 - getH(root) / 2;
+      if (rightG.length) { placeX(root, baseX, +1, rightG); stackY(rightG, root.y - rh0 / 2); }
+      if (leftG.length) { placeX(root, baseX, -1, leftG); stackY(leftG, root.y - lh0 / 2); }
 
     } else if (layout === "mindmap") {
       // 经典双侧平衡：直接孩子按子树高度贪心分到左右
@@ -281,15 +287,12 @@ export function adaptMindmap(doc, focusId) {
     for (const k of kids) { placeDown(k, left + subW(k) / 2, top + getH(node) + V_GAP); left += subW(k) + H_GAP; }
   };
 
-  // 重排某节点的可见子树：锚定该节点当前位置，子节点按 side 向外延伸并垂直居中
+  // 重排某节点的可见子树：锚定该节点当前位置（焦点节点保持原位），子节点按 side 向外延伸并垂直居中
   const layoutSubtree = (node) => {
     const kids = cm.get(node.id) || [];
     if (!kids.length) return;
     if (layout === "structure") {
-      let cursor = node.y + getH(node) + V_GAP;
-      for (const k of kids) { placeDownY(k, cursor, cm.get(k.id)); cursor += subH(k) + V_GAP; }
-      const first = kids[0], last = kids[kids.length - 1];
-      node.x = (first.x + (last.x + getW(last))) / 2 - getW(node) / 2;
+      placeDown(node, node.x + getW(node) / 2, node.y); // 锚定 node 位置，向下铺开（父在子代间水平居中）
     } else {
       // 缺 side 的子节点按子树高度贪心分到两侧，保持平衡；已有 side 的保留（不翻面，尊重手动/历史安排）
       const noSide = kids.filter((k) => k.side !== "left" && k.side !== "right" && k.side !== "down");
@@ -304,8 +307,7 @@ export function adaptMindmap(doc, focusId) {
       for (const k of kids) {
         placeX(k, k.side === "left" ? node.x - getW(k) - H_GAP : node.x + getW(node) + H_GAP, dirFor(k.side === "left" ? "left" : "right"), cm.get(k.id));
       }
-      const first = kids[0], last = kids[kids.length - 1];
-      node.y = (first.y + (last.y + getH(last))) / 2 - getH(node) / 2;
+      // 注意：不重设 node.y / node.x —— 焦点节点保持原位（锚定），子代已在其周围居中，避免无谓平移
     }
   };
 
@@ -314,14 +316,18 @@ export function adaptMindmap(doc, focusId) {
     node.y += dy;
     for (const c of cm.get(node.id) || []) shiftSubtree(c, dy);
   };
-  // 同级之间纵向收敛：以最上方兄弟为锚向下紧排，消除空隙与重叠（收起时空隙被回收、展开时下方兄弟下移让位）；
-  // 随后父节点在子节点之间重新居中（仅调父节点 y，不带动子节点，进一步贴近平衡）
-  const resolveSiblings = (parent) => {
+  // 同级之间纵向收敛：以「路径节点」(发生变化的那一支) 为锚，仅向下紧排其下方兄弟——
+  // 上方兄弟与路径节点保持原位，下方兄弟按需要上移（收起时空隙被回收）或下移（展开/增删时让位），
+  // 从而既消除重叠又绝不搬动无关节点；随后父节点在子节点之间重新居中（仅调父节点 y，不动子节点）
+  const resolveSiblings = (parent, pathNode) => {
     const kids = cm.get(parent.id) || [];
-    if (kids.length >= 2) {
+    if (kids.length >= 1) {
       const sorted = [...kids].sort((a, b) => a.y - b.y);
-      let cursor = sorted[0].y;
-      for (const k of sorted) {
+      const pi = pathNode ? sorted.indexOf(pathNode) : 0;
+      const start = pi < 0 ? 0 : pi; // 路径节点（含）及其下方兄弟参与紧排；上方兄弟纹丝不动
+      let cursor = sorted[start].y;
+      for (let i = start; i < sorted.length; i++) {
+        const k = sorted[i];
         const dy = cursor - k.y;
         if (dy !== 0) shiftSubtree(k, dy);
         cursor += subH(k) + V_GAP;
@@ -338,11 +344,13 @@ export function adaptMindmap(doc, focusId) {
   if (!focus) return;
   layoutSubtree(focus);
   // 沿祖先链向上：每级收敛兄弟子树并重新居中父节点，使变化向上传播但不波及无关分支
+  // structure 布局的兄弟是横向并排，纵向收敛会错位，故仅对非 structure 做祖先传播
+  if (layout === "structure") return;
   let cur = focus;
   while (cur && cur.parentId != null && idSet.has(cur.parentId) && !hidden.has(cur.parentId)) {
     const parent = nodeById(cur.parentId);
     if (!parent) break;
-    resolveSiblings(parent);
+    resolveSiblings(parent, cur);
     cur = parent;
   }
 }
