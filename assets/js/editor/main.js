@@ -494,7 +494,7 @@ function openGroupModal(gid) {
   const close = showModal(isFrame ? "外框" : "概括",
     `<div style="font-size:13px;color:#6b7686;margin-bottom:8px">${isFrame ? "虚线框圈住所选节点，双击可再次编辑" : "大括号 + 标签标注在所选节点右侧，双击可再次编辑"}</div>` +
     `<div class="gm-ws-t">标题</div>` +
-    `<input id="gmGroupText" class="gm-note-ta" style="min-height:0;padding:9px 12px" maxlength="20" placeholder="${isFrame ? "可选标题" : "概要"}" value="${escapeModalText(g.text || "")}" />` +
+    `<input id="gmGroupText" class="gm-note-ta" style="min-height:0;padding:9px 12px" maxlength="30" placeholder="${isFrame ? "可选标题" : "概要"}" value="${escapeModalText(g.text || "")}" />` +
     `<div class="gm-ws-t">颜色</div>` +
     `<div class="gm-ws-row">${swatches.map(sw).join("")}</div>` +
     `<div class="gm-modal-acts" style="margin-top:14px">` +
@@ -507,7 +507,8 @@ function openGroupModal(gid) {
     document.querySelectorAll("[data-gc]").forEach((x) => x.classList.toggle("active", x.dataset.gc === b.dataset.gc));
   }));
   document.getElementById("gmGroupSave").addEventListener("click", () => {
-    editor.updateGroup(gid, { text: inp.value.trim() });
+    // 标题最多 30 字（输入框 maxlength 已限，这里兜底防止粘贴/历史数据超长）
+    editor.updateGroup(gid, { text: inp.value.trim().slice(0, 30) });
     close();
   });
   document.getElementById("gmGroupDel").addEventListener("click", () => {

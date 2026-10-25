@@ -1132,6 +1132,9 @@ export class Editor {
       const TH = 24;
       const topR = { x: box.x, y: box.y - TH, w: box.w, h: box.h + TH };
       const botR = { x: box.x, y: box.y, w: box.w, h: box.h + TH };
+      // 标题带本身也必须避开无关节点：整条带被占就不能用该带（否则框向该方向扩时会压住节点）
+      const topFree = !this._rectHitAny(topR, obstacles);
+      const botFree = !this._rectHitAny(botR, obstacles);
       const topBandY = box.y - TH + 3;
       const botBandY = box.y + box.h + 3;
       // 在带内沿水平方向找空位（步进 16px）
@@ -1141,24 +1144,16 @@ export class Editor {
         }
         return null;
       };
-      const topX = scan(topBandY, Math.max(box.x + box.w - 8, box.x + 10 + tw));
-      const botX = scan(botBandY, Math.max(botR.x + botR.w - 8, box.x + 10 + tw));
+      const topX = topFree ? scan(topBandY, Math.max(box.x + box.w - 8, box.x + 10 + tw)) : null;
+      const botX = botFree ? scan(botBandY, Math.max(botR.x + botR.w - 8, box.x + 10 + tw)) : null;
       if (topX !== null) { r = topR; labelX = topX; labelY = topBandY + 14; }
       else if (botX !== null) { r = botR; labelX = botX; labelY = botBandY + 14; }
-      else { r = topR; labelX = box.x + 10; labelY = topBandY + 14; }
-      // 标题比框宽时：只向左扩（且沿途不压无关节点），扩不动就把标题截断加省略号
-      // —— 绝不像旧版那样向右撑宽外框，否则会盖住右侧相邻节点
-      const needW = labelX + tw + 8;
-      if (r.x + r.w < needW) {
-        const need = Math.min(240, needW - (r.x + r.w));
-        let grow = 0;
-        for (let d = 8; d <= need; d += 8) {
-          if (this._rectHitAny({ x: r.x - d, y: r.y, w: d, h: r.h }, obstacles)) break;
-          grow = d;
-        }
-        if (grow > 0) { r = { x: r.x - grow, y: r.y, w: r.w + grow, h: r.h }; labelX -= grow; }
-        if (r.x + r.w < needW) drawTitle = this._clipLabel(title, Math.max(40, r.x + r.w - labelX - 8));
-      }
+      else if (topFree) { r = topR; labelX = box.x + 10; labelY = topBandY + 14; }
+      else if (botFree) { r = botR; labelX = box.x + 10; labelY = botBandY + 14; }
+      // 标题不向框外扩张：外框范围只由成员节点决定（成员在哪侧增删，框就只朝那侧伸缩），
+      // 标题超宽时在框内左对齐并截断加省略号，绝不像旧版那样把框撑向对侧压住无关节点
+      const availW = r.x + r.w - 8 - labelX;
+      if (availW < tw) drawTitle = this._clipLabel(title, Math.max(36, availW));
     }
     const titleEl = title
       ? `<text x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" font-size="14" font-weight="600" fill="${col}" font-family='-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'>${escapeXml(drawTitle)}</text>`
@@ -2188,19 +2183,31 @@ export class Editor {
     const id = newId();
     const ps = this.sizes.get(parent.id) || sizeOf(parent, "mindmap");
     const H_GAP = 56, V_GAP = 14;
-    // 已有子节点：接在最后一个子节点下方；没有子节点：与父节点同高
     const kids = this.doc.nodes.filter((n) => n.parentId === parent.id);
+    // 新节点只在本侧扩展：沿用同级已有分支方向（多数侧），同级无 side 时沿用父节点自身朝向，
+    // 绝不按高度平衡分到对侧（否则会出现「其他子节点在右、新节点跑到左」的错位）
+    const known = kids.filter((k) => k.side === "left" || k.side === "right");
+    let side = null;
+    if (this.doc.layout !== "structure") {
+      if (known.length) {
+        const lc = known.filter((k) => k.side === "left").length;
+        side = lc > known.length - lc ? "left" : (lc < known.length - lc ? "right" : known[0].side);
+      } else side = parent.side === "left" ? "left" : "right";
+    }
+    // 定位基准：同侧最后一个子节点下方；该侧还没有子节点则贴着父节点该侧
+    const sameSide = side ? kids.filter((k) => (k.side === "left" ? "left" : "right") === side) : kids;
     let x, y;
-    if (kids.length) {
-      const last = kids[kids.length - 1];
+    if (sameSide.length) {
+      const last = sameSide[sameSide.length - 1];
       const ls = this.sizes.get(last.id) || sizeOf(last, "mindmap");
       x = last.x; y = last.y + ls.h + V_GAP;
     } else {
-      const side = parent.side === "left" ? "left" : "right";
-      x = side === "left" ? parent.x - 124 - H_GAP : parent.x + ps.w + H_GAP;
+      const dir = side === "left" ? "left" : "right";
+      x = dir === "left" ? parent.x - 124 - H_GAP : parent.x + ps.w + H_GAP;
       y = parent.y;
     }
     const node = { id, x, y, w: 124, h: 44, text: "新节点", shape: "rounded", color: "#fff", textColor: "#1f2a37", stroke: parent.stroke || "#11b5a4", fontSize: 15, parentId, collapsed: false };
+    if (side) node.side = side;
     // 位置自适应：与已有节点重叠时向下（其次向上）寻找空位，保证新节点不遮挡任何节点
     const ns0 = sizeOf(node, "mindmap");
     const spot = this._freeSpotFor(x, y, ns0.w, ns0.h);
@@ -2210,7 +2217,7 @@ export class Editor {
     if (this.doc.groups && this.doc.groups.length) {
       for (const g of this.doc.groups) if (Array.isArray(g.ids) && g.ids.includes(parentId)) g.ids.push(id);
     }
-    if (this.autoAdjust) adaptMindmap(this.doc, parentId); // 设置开启：新增后局部自适应
+    if (this.autoAdjust) adaptMindmap(this.doc, parentId, side); // 设置开启：新增后局部自适应（只动新增所在的那一侧）
     else if (this.autoRelayout) layoutMindmap(this.doc); // 设置开启：新增后自动重排
     this.selection = new Set([id]);
     this.render(); this.onChange();
@@ -2226,6 +2233,8 @@ export class Editor {
     const ns = this.sizes.get(node.id) || sizeOf(node, "mindmap");
     const V_GAP = 14;
     const newNode = { id, x: node.x, y: node.y + ns.h + V_GAP, w: 124, h: 44, text: "新节点", shape: "rounded", color: "#fff", textColor: "#1f2a37", stroke: pNode ? pNode.stroke : "#11b5a4", fontSize: 15, parentId: node.parentId, collapsed: false };
+    // 同级新节点与当前节点同侧（只在本侧扩展，不跨到对侧）
+    if (node.side) newNode.side = node.side;
     // 1) 插到当前节点之后：同级顺序直接决定「整理布局」时的上下次序
     const idx = this.doc.nodes.findIndex((n) => n.id === nodeId);
     if (idx >= 0) this.doc.nodes.splice(idx + 1, 0, newNode);
@@ -2245,7 +2254,7 @@ export class Editor {
     if (this.doc.groups && this.doc.groups.length) {
       for (const g of this.doc.groups) if (Array.isArray(g.ids) && g.ids.includes(nodeId)) g.ids.push(id);
     }
-    if (this.autoAdjust) adaptMindmap(this.doc, node.parentId); // 设置开启：新增后局部自适应
+    if (this.autoAdjust) adaptMindmap(this.doc, node.parentId, node.side); // 设置开启：新增后局部自适应（与当前节点同侧）
     else if (this.autoRelayout) layoutMindmap(this.doc); // 设置开启：新增后自动重排
     this.selection = new Set([id]);
     this.render(); this.onChange();

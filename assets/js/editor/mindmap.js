@@ -206,7 +206,9 @@ export function layoutMindmap(doc, layout) {
 // 做到「节点不遮挡、视觉平衡」，但绝不覆盖无关节点（含手动摆放）的位置——
 // 与 layoutMindmap（整图重新布局，会改动所有节点）不同。
 // focusId：发生结构变化的根节点（其可见子树被重排）；缺省则对整个可见树做局部收敛。
-export function adaptMindmap(doc, focusId) {
+// sideHint：本次结构变化发生在哪一侧（left/right）。双侧脑图（根节点左右都有分支）时，
+// 只重排该侧并以父节点为轴垂直居中，对侧分支保持原样 —— 否则收起左侧会连右侧一起搬动。
+export function adaptMindmap(doc, focusId, sideHint) {
   const nodes = doc.nodes || [];
   if (!nodes.length) return;
   // 坐标防护：旧数据 / 导入异常导致的 NaN 先归零，避免计算扩散成 NaN
@@ -256,6 +258,8 @@ export function adaptMindmap(doc, focusId) {
   const groupHeight = (list) => { let c = 0; for (const k of list) c += subH(k) + V_GAP; return list.length ? c - V_GAP : 0; };
   const groupWidth = (list) => { let c = 0; for (const k of list) c += subW(k) + H_GAP; return list.length ? c - H_GAP : 0; };
   const dirFor = (side) => (side === "left" ? -1 : 1);
+  // 分支朝向归一化：left / right / down（缺省视为 right）
+  const sideOf = (n) => (n.side === "left" ? "left" : n.side === "down" ? "down" : "right");
 
   // 向外范式：递归设定 y（父在子代间垂直居中）
   const placeY = (node, top, kids) => {
@@ -288,23 +292,43 @@ export function adaptMindmap(doc, focusId) {
   };
 
   // 重排某节点的可见子树：锚定该节点当前位置（焦点节点保持原位），子节点按 side 向外延伸并垂直居中
+  // 双侧父节点（左右都有分支）只重排 sideHint 那一侧，对侧完全不动
   const layoutSubtree = (node) => {
     const kids = cm.get(node.id) || [];
     if (!kids.length) return;
     if (layout === "structure") {
       placeDown(node, node.x + getW(node) / 2, node.y); // 锚定 node 位置，向下铺开（父在子代间水平居中）
     } else {
-      // 缺 side 的子节点按子树高度贪心分到两侧，保持平衡；已有 side 的保留（不翻面，尊重手动/历史安排）
+      // 缺 side 的子节点：优先沿用 hint / 同级已有分支方向（多数侧）——只在同一侧扩展，绝不跨到对侧；
+      // 同级全无 side 时才按子树高度贪心分两侧保持平衡
       const noSide = kids.filter((k) => k.side !== "left" && k.side !== "right" && k.side !== "down");
       if (noSide.length) {
-        const sorted = [...noSide].sort((a, b) => subH(b) - subH(a));
-        let lh = 0, rh = 0;
-        for (const k of sorted) { if (lh <= rh) { k.side = "left"; lh += subH(k) + V_GAP; } else { k.side = "right"; rh += subH(k) + V_GAP; } }
+        if (sideHint === "left" || sideHint === "right") {
+          for (const k of noSide) k.side = sideHint;
+        } else {
+          const known = kids.filter((k) => k.side === "left" || k.side === "right");
+          if (known.length) {
+            const lc = known.filter((k) => k.side === "left").length;
+            const pick = lc > known.length - lc ? "left" : (lc < known.length - lc ? "right" : known[0].side);
+            for (const k of noSide) k.side = pick;
+          } else {
+            const sorted = [...noSide].sort((a, b) => subH(b) - subH(a));
+            let lh = 0, rh = 0;
+            for (const k of sorted) { if (lh <= rh) { k.side = "left"; lh += subH(k) + V_GAP; } else { k.side = "right"; rh += subH(k) + V_GAP; } }
+          }
+        }
       }
-      const total = groupHeight(kids);
-      let top = node.y - total / 2;
-      for (const k of kids) { placeY(k, top, cm.get(k.id)); top += subH(k) + V_GAP; }
-      for (const k of kids) {
+      // 双侧父节点：只排发生变化的那一侧，另一侧一根手指都不动
+      const sides = new Set(kids.map(sideOf));
+      const affected = sides.size > 1 && (sideHint === "left" || sideHint === "right")
+        ? kids.filter((k) => sideOf(k) === sideHint)
+        : kids;
+      if (!affected.length) return;
+      // 该侧整组按子树高度紧排，并以父节点垂直中心为轴居中（自平衡）
+      const total = groupHeight(affected);
+      let top = node.y + getH(node) / 2 - total / 2;
+      for (const k of affected) { placeY(k, top, cm.get(k.id)); top += subH(k) + V_GAP; }
+      for (const k of affected) {
         placeX(k, k.side === "left" ? node.x - getW(k) - H_GAP : node.x + getW(node) + H_GAP, dirFor(k.side === "left" ? "left" : "right"), cm.get(k.id));
       }
       // 注意：不重设 node.y / node.x —— 焦点节点保持原位（锚定），子代已在其周围居中，避免无谓平移
@@ -320,9 +344,24 @@ export function adaptMindmap(doc, focusId) {
   // 上方兄弟与路径节点保持原位，下方兄弟按需要上移（收起时空隙被回收）或下移（展开/增删时让位），
   // 从而既消除重叠又绝不搬动无关节点；随后父节点在子节点之间重新居中（仅调父节点 y，不动子节点）
   const resolveSiblings = (parent, pathNode) => {
-    const kids = cm.get(parent.id) || [];
-    if (kids.length >= 1) {
-      const sorted = [...kids].sort((a, b) => a.y - b.y);
+    const all = cm.get(parent.id) || [];
+    if (!all.length) return;
+    // 双侧父节点（左右都有分支）：只把 pathNode 所在那一侧重新紧排并垂直居中，对侧与父节点纹丝不动
+    if (pathNode && new Set(all.map(sideOf)).size > 1) {
+      const group = all.filter((n) => sideOf(n) === sideOf(pathNode));
+      if (group.length) {
+        const total = groupHeight(group);
+        let top = parent.y + getH(parent) / 2 - total / 2;
+        for (const k of group) {
+          const dy = top - k.y;
+          if (dy !== 0) shiftSubtree(k, dy);
+          top += subH(k) + V_GAP;
+        }
+      }
+      return;
+    }
+    if (all.length >= 1) {
+      const sorted = [...all].sort((a, b) => a.y - b.y);
       const pi = pathNode ? sorted.indexOf(pathNode) : 0;
       const start = pi < 0 ? 0 : pi; // 路径节点（含）及其下方兄弟参与紧排；上方兄弟纹丝不动
       let cursor = sorted[start].y;
@@ -342,7 +381,7 @@ export function adaptMindmap(doc, focusId) {
 
   const focus = focusId ? nodeById(focusId) : (nodes.find((n) => n.parentId == null) || null);
   if (!focus) return;
-  layoutSubtree(focus);
+  layoutSubtree(focus, sideHint);
   // 沿祖先链向上：每级收敛兄弟子树并重新居中父节点，使变化向上传播但不波及无关分支
   // structure 布局的兄弟是横向并排，纵向收敛会错位，故仅对非 structure 做祖先传播
   if (layout === "structure") return;
