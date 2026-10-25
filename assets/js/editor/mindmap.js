@@ -7,6 +7,32 @@ import { sizeOf } from "./model.js";
 const V_GAP = 16; // 同级节点垂直间距
 const H_GAP = 56; // 层级间最小水平间距（基准）
 
+// 折叠隐藏集合：支持「只折叠某一侧」（collapsedL / collapsedR，根节点左右各一个徽标），
+// 老数据没有分侧标记时按整体 collapsed 处理。
+// kidsAll：parentId -> 子节点对象数组
+function collectHidden(nodes, kidsAll) {
+  const hidden = new Set();
+  const stack = [];
+  const add = (id) => { if (!hidden.has(id)) { hidden.add(id); stack.push(id); } };
+  for (const n of nodes) {
+    const kids = kidsAll.get(n.id) || [];
+    if (!kids.length) continue;
+    const sideFiltered = n.collapsedL != null || n.collapsedR != null;
+    for (const k of kids) {
+      const s = k.side === "left" ? "left" : k.side === "down" ? "down" : "right";
+      const fold = sideFiltered
+        ? (s === "left" ? !!n.collapsedL : s === "right" ? !!n.collapsedR : !!n.collapsed)
+        : !!n.collapsed;
+      if (fold) add(k.id);
+    }
+  }
+  while (stack.length) {
+    const id = stack.pop();
+    for (const c of kidsAll.get(id) || []) add(c.id);
+  }
+  return hidden;
+}
+
 export function layoutMindmap(doc, layout) {
   const nodes = doc.nodes || [];
   if (!nodes.length) return;
@@ -23,14 +49,9 @@ export function layoutMindmap(doc, layout) {
   const roots = [];
   const idSet = new Set(nodes.map((n) => n.id));
   // 折叠感知：被折叠节点的整个子树视为隐藏，布局时按叶子处理
-  const hidden = new Set();
   const kidsAll = new Map();
   for (const n of nodes) if (n.parentId != null) { if (!kidsAll.has(n.parentId)) kidsAll.set(n.parentId, []); kidsAll.get(n.parentId).push(n); }
-  const stack = nodes.filter((n) => n.collapsed && (kidsAll.get(n.id) || []).length).map((n) => n.id);
-  while (stack.length) {
-    const id = stack.pop();
-    for (const c of kidsAll.get(id) || []) if (!hidden.has(c.id)) { hidden.add(c.id); stack.push(c.id); }
-  }
+  const hidden = collectHidden(nodes, kidsAll);
   for (const n of nodes) {
     if (hidden.has(n.id)) continue;
     // parentId 为空或父节点不存在（孤儿节点）都按根处理，否则孤儿永不参与布局、坐标失控
@@ -143,8 +164,8 @@ export function layoutMindmap(doc, layout) {
       const rightG = direct.filter((k) => k.side !== "left");
       const rh0 = groupHeight(rightG), lh0 = groupHeight(leftG);
       root.y = Math.max(rh0, lh0) / 2 - getH(root) / 2;
-      if (rightG.length) { placeX(root, baseX, +1, rightG); stackY(rightG, root.y - rh0 / 2); }
-      if (leftG.length) { placeX(root, baseX, -1, leftG); stackY(leftG, root.y - lh0 / 2); }
+      if (rightG.length) { placeX(root, baseX, +1, rightG); stackY(rightG, root.y + getH(root) / 2 - rh0 / 2); }
+      if (leftG.length) { placeX(root, baseX, -1, leftG); stackY(leftG, root.y + getH(root) / 2 - lh0 / 2); }
 
     } else if (layout === "mindmap") {
       // 经典双侧平衡：直接孩子按子树高度贪心分到左右
@@ -160,11 +181,11 @@ export function layoutMindmap(doc, layout) {
       root.y = Math.max(rh0, lh0) / 2 - getH(root) / 2;
       if (rightG.length) {
         placeX(root, baseX, +1, rightG);
-        stackY(rightG, root.y - rh0 / 2);
+        stackY(rightG, root.y + getH(root) / 2 - rh0 / 2);
       }
       if (leftG.length) {
         placeX(root, baseX, -1, leftG);
-        stackY(leftG, root.y - lh0 / 2);
+        stackY(leftG, root.y + getH(root) / 2 - lh0 / 2);
       }
 
     } else {
@@ -177,8 +198,8 @@ export function layoutMindmap(doc, layout) {
   // 折叠节点的隐藏子树：不参与主布局（折叠后不应占用空间），但每次重排都要贴着父节点重新安放。
   // 否则这些节点坐标会一直停在上一次的位置，而末尾的整体平移又会反复叠加，
   // 导致包围盒一轮比一轮大、点整理布局后视图越缩越小（历史 bug）
-  function placeHidden(parent, dir) {
-    const kids = kidsAll.get(parent.id) || [];
+  function placeHidden(parent, dir, onlyKids) {
+    const kids = onlyKids || kidsAll.get(parent.id) || [];
     const step = getW(parent) + H_GAP;
     let cursor = parent.y;
     for (const k of kids) {
@@ -190,10 +211,16 @@ export function layoutMindmap(doc, layout) {
     }
   }
   for (const n of nodes) {
-    if (!n.collapsed) continue;
-    const kids = kidsAll.get(n.id) || [];
-    if (!kids.length) continue;
-    placeHidden(n, n.side === "left" ? -1 : +1);
+    const allKids = kidsAll.get(n.id) || [];
+    if (!allKids.length) continue;
+    const sideFiltered = n.collapsedL != null || n.collapsedR != null;
+    if (!sideFiltered) {
+      if (n.collapsed) placeHidden(n, n.side === "left" ? -1 : +1);
+      continue;
+    }
+    // 分侧折叠：只把该侧被收起的子树贴着父节点安放
+    if (n.collapsedL) placeHidden(n, -1, allKids.filter((k) => k.side === "left"));
+    if (n.collapsedR) placeHidden(n, +1, allKids.filter((k) => k.side !== "left"));
   }
 
   // 稳定化：重排后整体平移，使根节点位置与重排前一致（修复工具栏操作导致导图位置改变）
@@ -215,15 +242,10 @@ export function adaptMindmap(doc, focusId, sideHint) {
   for (const n of nodes) { if (!Number.isFinite(n.x)) n.x = 0; if (!Number.isFinite(n.y)) n.y = 0; }
   const layout = doc.layout || "mindmap";
 
-  // 折叠隐藏集合（已折叠节点的整棵后代子树）
+  // 折叠隐藏集合（已折叠节点的整棵后代子树，支持分侧折叠）
   const kidsAll = new Map();
   for (const n of nodes) if (n.parentId != null) { if (!kidsAll.has(n.parentId)) kidsAll.set(n.parentId, []); kidsAll.get(n.parentId).push(n); }
-  const hidden = new Set();
-  const stack = nodes.filter((n) => n.collapsed && (kidsAll.get(n.id) || []).length).map((n) => n.id);
-  while (stack.length) {
-    const id = stack.pop();
-    for (const c of kidsAll.get(id) || []) if (!hidden.has(c.id)) { hidden.add(c.id); stack.push(c.id); }
-  }
+  const hidden = collectHidden(nodes, kidsAll);
 
   const idSet = new Set(nodes.map((n) => n.id));
   const nodeById = (id) => nodes.find((n) => n.id === id);
@@ -260,6 +282,27 @@ export function adaptMindmap(doc, focusId, sideHint) {
   const dirFor = (side) => (side === "left" ? -1 : 1);
   // 分支朝向归一化：left / right / down（缺省视为 right）
   const sideOf = (n) => (n.side === "left" ? "left" : n.side === "down" ? "down" : "right");
+
+  // 方位纠偏（自动吸附）：节点被摆到父节点另一侧（例如手动拖到根节点左边）时，
+  // 把它的 side 纠正为当前所在侧 —— 布局后就会吸附到父节点左侧/右侧，而不是被排到对面去。
+  // 只在「明显越到另一侧」（超过父宽一半 + 24px）时纠正，避免正常布局抖动。
+  // 记录每个父节点被纠正后的侧，用于把本次重排限定在该侧。
+  const sideChanged = new Map();
+  if (layout === "elbow" || layout === "mindmap" || layout === "logicRight" || layout === "logicLeft") {
+    for (const n of nodes) {
+      if (n.parentId == null || hidden.has(n.id) || hidden.has(n.parentId)) continue;
+      const p = nodeById(n.parentId);
+      if (!p) continue;
+      const pc = p.x + getW(p) / 2, nc = n.x + getW(n) / 2;
+      const half = getW(p) / 2 + 24;
+      let want = sideOf(n);
+      if (layout === "logicLeft") want = "left";
+      else if (layout === "logicRight" || layout === "list") want = "right";
+      else if (nc < pc - half) want = "left";
+      else if (nc > pc + half) want = "right";
+      if (want !== sideOf(n)) { n.side = want; sideChanged.set(p.id, want); }
+    }
+  }
 
   // 向外范式：递归设定 y（父在子代间垂直居中）
   const placeY = (node, top, kids) => {
@@ -318,9 +361,9 @@ export function adaptMindmap(doc, focusId, sideHint) {
           }
         }
       }
-      // 双侧父节点：只排发生变化的那一侧，另一侧一根手指都不动
-      const sides = new Set(kids.map(sideOf));
-      const affected = sides.size > 1 && (sideHint === "left" || sideHint === "right")
+      // 指定了变化侧就只排该侧；该侧节点已被收起（不可见）时不排任何东西——
+      // 绝不能因为「另一侧还可见」就把对侧节点重新居中（那会把无关节点搬走）
+      const affected = (sideHint === "left" || sideHint === "right")
         ? kids.filter((k) => sideOf(k) === sideHint)
         : kids;
       if (!affected.length) return;
@@ -381,7 +424,8 @@ export function adaptMindmap(doc, focusId, sideHint) {
 
   const focus = focusId ? nodeById(focusId) : (nodes.find((n) => n.parentId == null) || null);
   if (!focus) return;
-  layoutSubtree(focus, sideHint);
+  // 本次变化发生在哪一侧：显式 hint 优先；否则用方位纠偏的结果（节点被摆到父节点另一侧）
+  layoutSubtree(focus, sideHint || sideChanged.get(focus.id) || undefined);
   // 沿祖先链向上：每级收敛兄弟子树并重新居中父节点，使变化向上传播但不波及无关分支
   // structure 布局的兄弟是横向并排，纵向收敛会错位，故仅对非 structure 做祖先传播
   if (layout === "structure") return;

@@ -1351,11 +1351,11 @@ function mmHasKids(n) { return editor.doc.nodes.some((c) => c.parentId === n.id)
 // 当前选中中的节点 id（排除连线 "e:" 键）
 function selectedNodeIds() { return [...editor.selection].filter((id) => !String(id).startsWith("e:")); }
 function mmSetAllCollapsed(collapsed) {
-  for (const n of editor.doc.nodes) if (mmHasKids(n)) n.collapsed = collapsed;
+  for (const n of editor.doc.nodes) if (mmHasKids(n)) { n.collapsed = collapsed; n.collapsedL = null; n.collapsedR = null; }
   editor.render(); editor.onChange(); editor.pushHistory();
 }
 function mmCollapseToDepth(depth) {
-  for (const n of editor.doc.nodes) if (mmHasKids(n)) n.collapsed = mmNodeDepth(n) >= depth;
+  for (const n of editor.doc.nodes) if (mmHasKids(n)) { n.collapsed = mmNodeDepth(n) >= depth; n.collapsedL = null; n.collapsedR = null; }
   editor.render(); editor.onChange(); editor.pushHistory();
   toast(`已展开到 ${depth} 级主题`, "info");
 }

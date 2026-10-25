@@ -254,6 +254,9 @@ export class Editor {
     for (const n of this.doc.nodes) this.sizes.set(n.id, sizeOf(n, this.doc.type));
     // 每个节点的后代总数（折叠徽标显示用）
     this._descCounts = this._calcDescCounts();
+    // 外框避让：结构变化（展开/收起/增删/拖动）后，把被外框圈到的无关节点挪到框外。
+    // 拖动/框选中不处理，避免手里的节点被抢走；松手后的这次 render 会完成整理。
+    if (this.doc.type === "mindmap" && !this._drag && !this._pan && !this._marquee && !this._connect) this._avoidFrameOverlap();
 
     let html = "";
     // 白板网格（不进导出）
@@ -516,20 +519,27 @@ export class Editor {
     if (this.doc.type === "whiteboard" && n.locked && !this._forExport) {
       inner += `<g transform="translate(${w - 6},-6)"><circle r="8" fill="#94a3b8" stroke="#fff" stroke-width="1.5"/><text y="3.5" text-anchor="middle" font-size="9">🔒</text></g>`;
     }
-    // 脑图：折叠 / 展开徽标（点击切换子树显隐）；收起时显示被隐藏的后代节点总数
+    // 脑图：折叠 / 展开徽标。按「子节点所在分支侧」各画一个 ——
+    // 根节点左右两侧都有分支时，左、右各有一个徽标，可分别收起 / 展开该侧子树。
     if (this.doc.type === "mindmap" && !this._forExport) {
-      const hasKids = this.doc.nodes.some((c) => c.parentId === n.id);
-      if (hasKids) {
-        const side = n.side === "left" ? "left" : n.side === "down" ? "down" : "right";
-        const bx = side === "left" ? -14 : side === "down" ? w / 2 : w + 14;
-        const by = side === "down" ? h + 14 : h / 2;
+      const kids = this.doc.nodes.filter((c) => c.parentId === n.id);
+      if (kids.length) {
+        const grp = { left: [], right: [], down: [] };
+        for (const k of kids) grp[k.side === "left" ? "left" : k.side === "down" ? "down" : "right"].push(k);
         const col = n.stroke || "#94a3b8";
-        const cnt = this._descCounts ? (this._descCounts.get(n.id) || 0) : 0;
-        const label = n.collapsed ? String(cnt) : "−";
-        // 数字位数多时放宽徽标，避免挤出圆外
-        const r = label.length >= 3 ? 11.5 : label.length === 2 ? 9.5 : 8;
-        const fs = label.length >= 3 ? 9.5 : label.length === 2 ? 10.5 : 11;
-        inner += `<g class="gm-collapse-badge" data-collapse="${n.id}"><title>${n.collapsed ? `已收起 ${cnt} 个后代节点，点击展开` : "点击收起子节点"}</title><circle cx="${bx}" cy="${by}" r="${r}" fill="#fff" stroke="${col}" stroke-width="1.5"/><text x="${bx}" y="${by + fs * 0.35}" text-anchor="middle" font-size="${fs}" font-weight="700" fill="#4b5563">${label}</text></g>`;
+        for (const side of ["left", "right", "down"]) {
+          if (!grp[side].length) continue;
+          const folded = this._sideFolded(n, side);
+          const cnt = folded ? this._sideSubtreeCount(grp[side]) : 0;
+          const bx = side === "left" ? -14 : side === "down" ? w / 2 : w + 14;
+          const by = side === "down" ? h + 14 : h / 2;
+          const label = folded ? String(cnt) : "−";
+          // 数字位数多时放宽徽标，避免挤出圆外
+          const r = label.length >= 3 ? 11.5 : label.length === 2 ? 9.5 : 8;
+          const fs = label.length >= 3 ? 9.5 : label.length === 2 ? 10.5 : 11;
+          const tip = folded ? `已收起该侧 ${cnt} 个节点，点击展开` : "点击收起该侧子节点";
+          inner += `<g class="gm-collapse-badge" data-collapse="${n.id}" data-side="${side}"><title>${tip}</title><circle cx="${bx}" cy="${by}" r="${r}" fill="#fff" stroke="${col}" stroke-width="1.5"/><text x="${bx}" y="${by + fs * 0.35}" text-anchor="middle" font-size="${fs}" font-weight="700" fill="#4b5563">${label}</text></g>`;
+        }
       }
     }
     // 选中框（直线/箭头 w、h 可能是负增量，选中框按包围盒画）
@@ -1097,74 +1107,51 @@ export class Editor {
     if (minX === Infinity) return null;
     return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
   }
-  // 外框：虚线圆角矩形圈住一组成员节点（世界坐标）；g.text 为可选标题；sel 选中高亮
-  frameHTML(members, g, sel) {
+  // 外框几何（渲染与避障共用）：成员包围盒 + 四边避障内距。
+  // 四边各自向外扩 PAD；某条边带一旦会压到无关节点就收缩（最小 0）—— 外框边框绝不压别的节点。
+  // 有标题时顶边优先留出 24px 标题带，让标题固定画在框内左上角且不压成员节点。
+  _frameBox(members, hasTitle) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const n of members) {
       const b = this.nodeBBox(n);
       minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
       maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
     }
-    if (minX === Infinity) return "";
+    if (minX === Infinity) return null;
     // 障碍集合：成员及其后代都不算障碍（后代本就紧贴外框边缘），只躲真正无关的节点
     const excl = new Set();
     for (const m of members) { excl.add(m.id); for (const d of this.descendants(m.id)) excl.add(d); }
     const obstacles = this._obstacles(excl, 4);
     const W = maxX - minX, H = maxY - minY;
-    // 四边各自向外扩 PAD；某条边带一旦会压到无关节点就收缩（最小 0）—— 外框绝不覆盖别的节点
     const PAD = 14;
-    const fitPad = (band) => {
-      for (let p = PAD; p > 0; p -= 2) if (!this._rectHitAny(band(p), obstacles)) return p;
+    const fitPad = (band, max = PAD) => {
+      for (let p = max; p > 0; p -= 2) if (!this._rectHitAny(band(p), obstacles)) return p;
       return 0;
     };
     const pl = fitPad((p) => ({ x: minX - p, y: minY, w: p, h: H }));
     const pr = fitPad((p) => ({ x: maxX, y: minY, w: p, h: H }));
-    const pt = fitPad((p) => ({ x: minX - pl, y: minY - p, w: W + pl + pr, h: p }));
+    const pt = fitPad((p) => ({ x: minX - pl, y: minY - p, w: W + pl + pr, h: p }), hasTitle ? 24 : PAD);
     const pb = fitPad((p) => ({ x: minX - pl, y: maxY, w: W + pl + pr, h: p }));
-    const col = sel ? "#11b5a4" : (g.stroke || "#aab3bf");
-    const box = { x: minX - pl, y: minY - pt, w: W + pl + pr, h: H + pt + pb };
+    return {
+      r: { x: minX - pl, y: minY - pt, w: W + pl + pr, h: H + pt + pb },
+      obstacles, excl,
+    };
+  }
+  // 外框：虚线圆角矩形圈住一组成员节点（世界坐标）；g.text 为可选标题；sel 选中高亮
+  frameHTML(members, g, sel) {
     const title = g.text ? String(g.text) : "";
-    // 标题一律画在外框「内部」的顶/底预留带里，绝不画到框外（旧版把带放在框外，且上/下带都被占时
-    // labelY 保持初值 0 —— 标题直接落到世界坐标 y=0 的远处并压住别的节点）。
-    // 做法：让框向顶（或底）再多留一条 TH 高的带，标题绘制在带内；只检测「新扩出的这条带」是否撞无关节点。
-    let r = box, labelX = box.x + 10, labelY = box.y + 14, drawTitle = title;
+    const geo = this._frameBox(members, !!title);
+    if (!geo) return "";
+    const r = geo.r;
+    const col = sel ? "#11b5a4" : (g.stroke || "#aab3bf");
+    // 标题始终固定在外框「内部」左上角：不随障碍漂移、也绝不跑到框外。
+    // 顶边已在 _frameBox 里优先留出 24px 标题带，因此标题不会压住成员节点。
+    const labelX = r.x + 10, labelY = r.y + 18;
+    let drawTitle = title;
     if (title) {
       const rawW = Math.max(20, this._labelWidth(title) - 16); // _labelWidth 含 16 内边距，这里取纯文字宽
-      // 返回可用方案：th = 预留带高，base = 文字基线（都在框内侧）
-      const tryBands = (th) => {
-        const topBand = { x: box.x, y: box.y - th, w: box.w, h: th };
-        if (!this._rectHitAny(topBand, obstacles)) return { side: "top", th, base: topBand.y + 16 };
-        const botBand = { x: box.x, y: box.y + box.h, w: box.w, h: th };
-        if (!this._rectHitAny(botBand, obstacles)) return { side: "bottom", th, base: botBand.y + th - 6 };
-        return null;
-      };
-      let pick = null;
-      for (const th of [20, 18, 16, 14]) { pick = tryBands(th); if (pick) break; }
-      // 上下都被无关节点紧贴：逐步加高预留带，把标题带挤出空位（最多 76px）
-      if (!pick) for (let extra = 4; extra <= 56 && !pick; extra += 4) pick = tryBands(20 + extra);
-      if (pick) {
-        r = pick.side === "top"
-          ? { x: box.x, y: box.y - pick.th, w: box.w, h: box.h + pick.th }
-          : { x: box.x, y: box.y, w: box.w, h: box.h + pick.th };
-        labelX = r.x + 10;
-        labelY = pick.base;
-      } else {
-        // 上下都被无关节点紧贴（连加高都挤不出带）：退到框内找一块真正空白的区域放标题，
-        // 这样既不会跑出框外压别的节点，也不会压住框内的成员节点
-        const allObst = this._obstacles(null, 3);
-        const tw2 = Math.min(rawW, Math.max(40, box.w - 16));
-        let spot = null;
-        for (let yy = box.y + 3; yy + 18 <= box.y + box.h - 2 && !spot; yy += 6) {
-          for (let xx = box.x + 8; xx + tw2 <= box.x + box.w - 8; xx += 8) {
-            if (!this._rectHitAny({ x: xx, y: yy, w: tw2, h: 18 }, allObst)) { spot = { x: xx, y: yy + 14 }; break; }
-          }
-        }
-        // 实在连一像素空白都没有：仍留在框内顶部（宁可挤，也绝不跑到框外）
-        labelX = spot ? spot.x : box.x + 10;
-        labelY = spot ? spot.y : box.y + 14;
-      }
-      // 标题不撑宽外框：超宽就框内截断加省略号（宽度只由成员节点决定）
-      const avail = Math.max(36, Math.min(r.w - 20, r.x + r.w - 8 - labelX));
+      // 标题不撑宽外框：超宽就框内截断加省略号（框宽只由成员节点决定）
+      const avail = Math.max(36, r.w - 20);
       if (rawW > avail) drawTitle = this._clipLabel(title, avail + 16);
     }
     const titleEl = title
@@ -1172,6 +1159,75 @@ export class Editor {
       : "";
     return `<g class="gm-group gm-frame" data-g="${g.id}">` +
       `<rect x="${r.x.toFixed(1)}" y="${r.y.toFixed(1)}" width="${r.w.toFixed(1)}" height="${r.h.toFixed(1)}" rx="12" fill="${col}14" stroke="${col}" stroke-width="${sel ? 2.5 : 1.8}" stroke-dasharray="7 5"/>` + titleEl + `</g>`;
+  }
+  // 外框避障：外框是矩形，无法绕开落在圈内的无关节点 —— 直接把被圈到的节点（连同其可见子树）
+  // 平移到框外最近空位，做到「每次调整位置后外框整体不遮挡任何节点」。
+  // 返回是否移动过节点（调用方据此触发保存）
+  _avoidFrameOverlap() {
+    if (this.doc.type !== "mindmap") return false;
+    const groups = this.doc.groups;
+    if (!Array.isArray(groups) || !groups.length) return false;
+    const hidden = this.hiddenNodes();
+    let moved = false;
+    for (const g of groups) {
+      if (g.kind !== "frame" || !Array.isArray(g.ids) || !g.ids.length) continue;
+      // 每轮只挪一个被撞节点，最多 12 轮：挪开后框会重新收缩，可能暴露新的冲突
+      for (let round = 0; round < 12; round++) {
+        const members = g.ids.map((id) => this.nodeById(id)).filter((n) => n && !hidden.has(n.id));
+        if (!members.length) break;
+        const geo = this._frameBox(members, !!g.text);
+        if (!geo) break;
+        const r = geo.r;
+        const hits = [];
+        for (const n of this.doc.nodes) {
+          if (geo.excl.has(n.id) || hidden.has(n.id)) continue;
+          const b = this.nodeBBox(n);
+          if (b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y) hits.push(n);
+        }
+        if (!hits.length) break;
+        // 只挪「最上层」的被撞节点：父节点也被撞时先挪父，整棵子树一起让开
+        const hitSet = new Set(hits.map((n) => n.id));
+        const pick = hits.find((n) => n.parentId == null || !hitSet.has(n.parentId)) || hits[0];
+        if (!this._nudgeOutOfRect(pick, r, geo.excl, hidden)) break;
+        moved = true;
+      }
+    }
+    return moved;
+  }
+  // 把节点（连同可见子树）整体平移到矩形 r 外；四方向取位移最小且不撞其他节点者
+  _nudgeOutOfRect(node, r, exclIds, hidden) {
+    const GAP = 18;
+    const ids = [node.id, ...this.descendants(node.id)].filter((id) => !hidden.has(id));
+    if (!ids.length) return false;
+    const skip = new Set(exclIds || []);
+    for (const id of ids) skip.add(id);
+    const obst = this._obstacles(skip, 10);
+    const bbox = (pdx = 0, pdy = 0) => {
+      let mnx = Infinity, mny = Infinity, mxx = -Infinity, mxy = -Infinity;
+      for (const id of ids) {
+        const nd = this.nodeById(id); if (!nd) continue;
+        const b = this.nodeBBox(nd);
+        mnx = Math.min(mnx, b.x + pdx); mny = Math.min(mny, b.y + pdy);
+        mxx = Math.max(mxx, b.x + b.w + pdx); mxy = Math.max(mxy, b.y + b.h + pdy);
+      }
+      return { x: mnx, y: mny, w: mxx - mnx, h: mxy - mny };
+    };
+    const base = bbox();
+    if (!Number.isFinite(base.x) || !Number.isFinite(base.y)) return false;
+    const cands = [
+      { dx: (r.x - GAP) - (base.x + base.w), dy: 0 },  // 向左让出
+      { dx: (r.x + r.w + GAP) - base.x, dy: 0 },       // 向右让出
+      { dx: 0, dy: (r.y - GAP) - (base.y + base.h) },  // 向上让出
+      { dx: 0, dy: (r.y + r.h + GAP) - base.y },       // 向下让出
+    ].sort((a, b) => (Math.abs(a.dx) + Math.abs(a.dy)) - (Math.abs(b.dx) + Math.abs(b.dy)));
+    for (const c of cands) {
+      if (!c.dx && !c.dy) continue;
+      const nb = bbox(c.dx, c.dy);
+      if (this._rectHitAny(nb, obst)) continue; // 挪过去会撞别的节点
+      for (const id of ids) { const nd = this.nodeById(id); if (nd) { nd.x += c.dx; nd.y += c.dy; } }
+      return true;
+    }
+    return false;
   }
   // 概括：一组成员右侧的大括号 + 标签（g.text，默认「概要」）；sel 选中高亮
   summaryHTML(members, g, sel) {
@@ -1438,7 +1494,7 @@ export class Editor {
     // 脑图折叠徽标：按下即记录（pointerup 时切换折叠状态）
     const colEl = target.closest && target.closest(".gm-collapse-badge");
     if (colEl && this.mode === "mindmap") {
-      this._pendingCollapse = colEl.getAttribute("data-collapse");
+      this._pendingCollapse = { id: colEl.getAttribute("data-collapse"), side: colEl.getAttribute("data-side") };
       return;
     }
 
@@ -1829,11 +1885,12 @@ export class Editor {
       if (this._onNoteBadge) this._onNoteBadge(id);
       return;
     }
-    // 折叠徽标：pointerup 时切换折叠状态
+    // 折叠徽标：pointerup 时切换折叠状态（side 存在时只切该侧分支）
     if (this._pendingCollapse) {
-      const cid = this._pendingCollapse;
+      const pc = this._pendingCollapse;
       this._pendingCollapse = null;
-      this.toggleCollapse(cid);
+      if (pc && typeof pc === "object") this.toggleCollapse(pc.id, pc.side || undefined);
+      else this.toggleCollapse(pc);
       return;
     }
     if (this._marquee) { this._marquee = null; this.render(); return; } // 选择已在拖拽中实时应用
@@ -1938,6 +1995,12 @@ export class Editor {
           return;
         }
       }
+      // 脑图：拖完松手后自动吸附——节点被拖到父节点的另一侧（例如根节点左边）时，
+      // 纠正 side 并吸附到该侧的正确位置，而不是停在拖放处或对面
+      if (moved && dragId && this.doc.type === "mindmap" && this.autoAdjust) {
+        const nd = this.nodeById(dragId);
+        if (nd && nd.parentId != null) adaptMindmap(this.doc, nd.parentId);
+      }
       if (moved) { this.onChange(); this.pushHistory(); }
       this._drag = null;
       // 单击图片（未拖动）-> 放大查看；拖动则正常移动节点
@@ -1960,26 +2023,70 @@ export class Editor {
     this.svg.classList.remove("panning");
   }
 
-  // 切换节点折叠状态（脑图）：设置开启时收起/展开后自动重排布局，否则只切换显隐（保留拖动位置）
-  toggleCollapse(id) {
+  // 某侧分支是否已折叠：优先看分侧标记（collapsedL / collapsedR），老数据回落到整体 collapsed
+  _sideFolded(n, side) {
+    if (side === "left") return n.collapsedL != null ? !!n.collapsedL : !!n.collapsed;
+    if (side === "right") return n.collapsedR != null ? !!n.collapsedR : !!n.collapsed;
+    return !!n.collapsed;
+  }
+  // 一组直接子节点连同其后代的总数（折叠徽标上显示的数字）
+  _sideSubtreeCount(kids) {
+    let c = 0;
+    for (const k of kids) c += 1 + (this._descCounts ? (this._descCounts.get(k.id) || 0) : 0);
+    return c;
+  }
+  // 切换节点折叠状态（脑图）。
+  // side 缺省 = 整体折叠；side=left/right 时只折叠该侧分支（根节点左右各有徽标，互不影响）。
+  // 设置开启时收起/展开后自动重排布局，否则只切换显隐（保留拖动位置）
+  toggleCollapse(id, side) {
     const n = this.nodeById(id);
-    if (!n || !this.doc.nodes.some((c) => c.parentId === n.id)) return;
-    n.collapsed = !n.collapsed;
-    if (this.autoAdjust) adaptMindmap(this.doc, id);
+    if (!n) return;
+    const children = this.doc.nodes.filter((c) => c.parentId === n.id);
+    if (!children.length) return;
+    if (side === "left" || side === "right") {
+      // 首次分侧操作：把当前整体折叠状态物化到两侧，避免「点一侧另一侧也跟着展开」
+      if (n.collapsedL == null && n.collapsedR == null) {
+        n.collapsedL = !!n.collapsed;
+        n.collapsedR = !!n.collapsed;
+      }
+      n.collapsed = false;
+      const key = side === "left" ? "collapsedL" : "collapsedR";
+      n[key] = !n[key];
+    } else {
+      n.collapsed = !n.collapsed;
+      n.collapsedL = null;
+      n.collapsedR = null;
+    }
+    if (this.autoAdjust) adaptMindmap(this.doc, id, side === "left" || side === "right" ? side : undefined);
     else if (this.autoRelayout) layoutMindmap(this.doc);
     this.render(); this.onChange(); this.pushHistory();
   }
 
-  // 折叠隐藏的节点集合：所有「已折叠节点的后代」
+  // 折叠隐藏的节点集合：所有「已折叠节点（或折叠的那一侧）的后代」
   hiddenNodes() {
     if (this.doc.type !== "mindmap") return new Set();
     const out = new Set();
     const cm = this.childrenMap();
-    const stack = this.doc.nodes.filter((n) => n.collapsed && (cm.get(n.id) || []).length).map((n) => n.id);
+    const byId = new Map(this.doc.nodes.map((n) => [n.id, n]));
+    const stack = [];
+    const add = (id) => { if (!out.has(id)) { out.add(id); stack.push(id); } };
+    for (const n of this.doc.nodes) {
+      const kids = cm.get(n.id) || [];
+      if (!kids.length) continue;
+      const sideFiltered = n.collapsedL != null || n.collapsedR != null;
+      for (const k of kids) {
+        const kn = byId.get(k);
+        const s = kn && kn.side === "left" ? "left" : kn && kn.side === "down" ? "down" : "right";
+        const fold = sideFiltered
+          ? (s === "left" ? !!n.collapsedL : s === "right" ? !!n.collapsedR : !!n.collapsed)
+          : !!n.collapsed;
+        if (fold) add(k);
+      }
+    }
     while (stack.length) {
       const id = stack.pop();
       // cm 的值是 id 字符串数组（非节点对象），直接收集 id
-      for (const c of cm.get(id) || []) if (!out.has(c)) { out.add(c); stack.push(c); }
+      for (const c of cm.get(id) || []) add(c);
     }
     return out;
   }
