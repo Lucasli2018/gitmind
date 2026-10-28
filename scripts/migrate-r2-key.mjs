@@ -1,25 +1,11 @@
 // 增量迁移：gm_maps 加 r2_key 列；data 列改为可 NULL（必要时重建表）；
 // 存量 storage='r2' 的行回填 r2_key（旧格式 maps/<id>.json）并清空 data 冗余。
-// 幂等：可重复执行。Token 读取 Machine 级 CLOUDFLARE_API_TOKEN。
-import { execFileSync } from "node:child_process";
+// 幂等：可重复执行。配置读环境变量 / 项目根 .env（见 scripts/config.mjs）。
+import { CF_API_TOKEN, CF_ACCOUNT_ID, D1_DATABASE_ID } from "./config.mjs";
 
-const ACCOUNT_ID = "332b848d9f5d9ec2808bdb855763eb8e";
-const DATABASE_ID = "3c83aee3-4645-450b-b50b-6488750deeb4";
-
-function getToken() {
-  try {
-    const t = execFileSync("powershell.exe", [
-      "-NoProfile",
-      "-Command",
-      "[Environment]::GetEnvironmentVariable('CLOUDFLARE_API_TOKEN','Machine')",
-    ]).toString().trim();
-    if (t) return t;
-  } catch (_) {}
-  return process.env.CLOUDFLARE_API_TOKEN || "";
-}
-
-const token = getToken();
-if (!token) { console.error("缺少 CLOUDFLARE_API_TOKEN"); process.exit(1); }
+const ACCOUNT_ID = CF_ACCOUNT_ID();
+const DATABASE_ID = D1_DATABASE_ID();
+const token = CF_API_TOKEN();
 
 const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/d1/database/${DATABASE_ID}/query`;
 

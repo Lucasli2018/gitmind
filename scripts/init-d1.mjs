@@ -1,31 +1,15 @@
 // 将 schema.sql 应用到共享 dev 库（REST），并自检表是否存在。
-// Token 读取 Machine 级 CLOUDFLARE_API_TOKEN；本地也可 export 同名环境变量。
-import { execFileSync } from "node:child_process";
+// 配置读环境变量 / 项目根 .env（见 scripts/config.mjs）。
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { CF_API_TOKEN, CF_ACCOUNT_ID, D1_DATABASE_ID } from "./config.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ACCOUNT_ID = "332b848d9f5d9ec2808bdb855763eb8e";
-const DATABASE_ID = "3c83aee3-4645-450b-b50b-6488750deeb4";
 
-function getToken() {
-  try {
-    const t = execFileSync("powershell.exe", [
-      "-NoProfile",
-      "-Command",
-      "[Environment]::GetEnvironmentVariable('CLOUDFLARE_API_TOKEN','Machine')",
-    ]).toString().trim();
-    if (t) return t;
-  } catch (_) {}
-  return process.env.CLOUDFLARE_API_TOKEN || "";
-}
-
-const token = getToken();
-if (!token) {
-  console.error("缺少 CLOUDFLARE_API_TOKEN（Machine 环境变量或 export）");
-  process.exit(1);
-}
+const token = CF_API_TOKEN();
+const ACCOUNT_ID = CF_ACCOUNT_ID();
+const DATABASE_ID = D1_DATABASE_ID();
 
 const sql = readFileSync(join(__dirname, "..", "schema.sql"), "utf8");
 const stmts = sql.split(";").map((s) => s.trim()).filter(Boolean);

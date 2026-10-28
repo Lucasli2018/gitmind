@@ -1,6 +1,6 @@
 // 编辑器入口：加载导图、自动保存、工具栏、主题、导出、分享、快捷键
 import { Auth, getMap, saveMap, setShare, toast, fmtTime, fmtSize, byteLength } from "../api.js";
-import { showFloatPanel, showModal, confirmDialog } from "../ui.js";
+import { showFloatPanel, showModal, confirmDialog, promptDialog } from "../ui.js";
 import { ICONS } from "../icons.js";
 import { Editor } from "./canvas.js";
 import { FC_TOOLS } from "./flowchart.js";
@@ -360,7 +360,7 @@ function fitAll() {
   if (editor.mode === "mindmap") toast("已整理布局并居中显示", "info");
   else toast("已居中并适配屏幕", "info");
 }
-function onMmAction(act, arg) {
+async function onMmAction(act, arg) {
   const selId = [...editor.selection][0];
   const node = selId ? editor.nodeById(selId) : null;
   const needNode = () => { if (!node) toast("请先选中一个节点", "info"); return !node; };
@@ -378,10 +378,17 @@ function onMmAction(act, arg) {
   }
   if (act === "href") {
     if (needNode()) return;
-    const url = prompt("输入超链接地址（留空移除）", node.href || "https://");
+    const url = await promptDialog({
+      title: "超链接",
+      value: node.href || "https://",
+      placeholder: "https://",
+      hint: "留空保存则移除超链接",
+      okText: "保存",
+    });
     if (url === null) return;
-    if (url.trim() && !/^https?:\/\//i.test(url.trim())) { toast("请输入 http(s):// 开头的网址", "error"); return; }
-    editor.setNodeStyle({ href: url.trim() || null });
+    const u = url.trim();
+    if (u && !/^https?:\/\//i.test(u)) { toast("请输入 http(s):// 开头的网址", "error"); return; }
+    editor.setNodeStyle({ href: u || null });
     return;
   }
   if (act === "note") {
@@ -465,6 +472,15 @@ function openImageLightbox(src) {
   document.addEventListener("keydown", onKey);
   document.body.appendChild(mask);
 }
+// 双击嵌入网页节点：模态框编辑地址（替代原生 prompt，画布内核经 onEmbedEdit 回调至此）
+async function onEmbedEditModal(node) {
+  const url = await promptDialog({ title: "嵌入网页", value: node.url || "https://", placeholder: "https://", okText: "保存" });
+  if (url === null) return;
+  const u = url.trim();
+  if (!u || !/^https?:\/\//i.test(u)) { toast("请输入 http(s):// 开头的网址", "error"); return; }
+  if (u !== node.url) { node.url = u; editor.render(); editor.onChange(); editor.pushHistory(); }
+}
+
 function openNoteModal(node) {
   const close = showModal("备注",
     `<textarea id="gmNoteTa" class="gm-note-ta" placeholder="输入备注内容…（留空保存则移除备注）">${escapeModalText(node.note || "")}</textarea>` +
@@ -853,20 +869,27 @@ function onWbTool(tool) {
   editor.setTool(editor.tool === tool ? "select" : tool);
   refreshWbActive();
 }
-function onWbMore(act) {
+async function onWbMore(act) {
   if (act === "embed") {
-    const url = prompt("输入要嵌入的网页地址（https://...）", "https://");
-    if (!url) return;
-    if (!/^https?:\/\//i.test(url.trim())) { toast("请输入 http(s):// 开头的网址", "error"); return; }
+    const url = await promptDialog({ title: "嵌入网页", value: "https://", placeholder: "https://", okText: "嵌入" });
+    if (url === null) return;
+    const u = url.trim();
+    if (!/^https?:\/\//i.test(u)) { toast("请输入 http(s):// 开头的网址", "error"); return; }
     const c = editor.viewCenterWorld();
-    editor.addEmbedNode(url.trim(), c.x, c.y);
+    editor.addEmbedNode(u, c.x, c.y);
   } else if (act === "sticky") {
     const c = editor.viewCenterWorld();
     editor.addWhiteboardNode("sticky", c.x, c.y);
     editor.setTool("select");
     refreshWbActive();
   } else if (act === "clear") {
-    if (confirm("确定清空白板上的所有内容？此操作可用 Ctrl+Z 撤销。")) editor.clearWhiteboard();
+    const ok = await confirmDialog({
+      title: "清空白板",
+      message: "确定清空白板上的所有内容？此操作可用 Ctrl+Z 撤销。",
+      okText: "清空",
+      danger: true,
+    });
+    if (ok) editor.clearWhiteboard();
   }
 }
 function refreshWbActive() {
@@ -1910,7 +1933,7 @@ function wireKeys() {
   document.getElementById("shareBtn").textContent = map.is_public ? "已分享" : "分享";
 
   let minimapRefresh = () => {}; // 小地图刷新（首次渲染前为空实现）
-  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshFcActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), onRender: () => minimapRefresh(), mode: map.type || "mindmap", onNoteBadge: (id) => { const n = editor.nodeById(id); if (n) openNoteModal(n); }, onEdgeEdit: (eid, childId) => openEdgeModal(eid, childId), onGroupEdit: (gid) => openGroupModal(gid), onImageZoom: openImageLightbox, onConfirmImageDelete: () => confirmDialog({ title: "删除含图片的节点", message: "该节点包含图片，确定要删除吗？此操作不可撤销。", okText: "删除", danger: true }) });
+  editor = new Editor(document.getElementById("canvas"), { onChange: scheduleSave, onUndoRedoState: updateUndoRedoButtons, onToolChange: () => { refreshWbActive(); refreshFcActive(); refreshWbStylePanel(); }, onSelectionChange: () => refreshWbStylePanel(), onRender: () => minimapRefresh(), mode: map.type || "mindmap", onNoteBadge: (id) => { const n = editor.nodeById(id); if (n) openNoteModal(n); }, onEdgeEdit: (eid, childId) => openEdgeModal(eid, childId), onGroupEdit: (gid) => openGroupModal(gid), onImageZoom: openImageLightbox, onEmbedEdit: (n) => onEmbedEditModal(n), onConfirmImageDelete: () => confirmDialog({ title: "删除含图片的节点", message: "该节点包含图片，确定要删除吗？此操作不可撤销。", okText: "删除", danger: true }) });
   window.__gmEditor = editor; // 测试钩子：headless 验证用
   const minimap = initMinimap(editor); // 小地图（右下角缩略导航）
   minimapRefresh = minimap.refresh;

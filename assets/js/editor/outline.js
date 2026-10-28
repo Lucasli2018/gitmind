@@ -1,10 +1,11 @@
 // 大纲面板：快速定位节点（只读列表，点击某行即选中并居中显示该节点；不再有应用/取消）
+import { toast } from "../api.js";
 import { sizeOf } from "./model.js";
 
 export function openOutline(editor) {
   const old = editor.container.querySelector(".gm-outline");
   if (old) { old.remove(); return; } // 再点一次大纲图标 = 关闭
-  if (editor.doc.type !== "mindmap") { alert("大纲仅支持思维导图"); return; }
+  if (editor.doc.type !== "mindmap") { toast("大纲仅支持思维导图", "info"); return; }
 
   const panel = document.createElement("div");
   panel.className = "gm-outline";

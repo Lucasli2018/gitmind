@@ -59,6 +59,7 @@ export class Editor {
     this._onEdgeEdit = opts.onEdgeEdit || null;   // 双击连线 -> 弹出连线编辑弹框
     this._onGroupEdit = opts.onGroupEdit || null; // 双击外框/概括 -> 弹出分组编辑弹框
     this.onImageZoom = opts.onImageZoom || null;   // 单击图片 -> 放大查看（灯箱）
+    this._onEmbedEdit = opts.onEmbedEdit || null;  // 双击嵌入网页节点 -> 编辑地址（外部模态框，画布内核不弹原生对话框）
     this.onConfirmImageDelete = opts.onConfirmImageDelete || null; // 删除含图片节点 -> 二次确认
     // 撤销/重做历史栈（快照式，仅存数据不含视图）
     this._history = []; this._hidx = -1; this._restoring = false;
@@ -2283,8 +2284,8 @@ export class Editor {
     const n = this.nodeById(hitId);
     if (!n) return;
     if (n.shape === "embed") {
-      const url = prompt("输入要嵌入的网页地址", n.url || "https://");
-      if (url && url !== n.url) { n.url = url.trim(); this.render(); this.onChange(); this.pushHistory(); }
+      // 编辑交给外部回调（main.js 用模态框实现），未接线时忽略
+      if (this._onEmbedEdit) this._onEmbedEdit(n);
       return;
     }
     this.beginTextEdit(n.id);

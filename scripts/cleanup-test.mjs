@@ -1,12 +1,9 @@
 // 清理测试账号与测试导图（仅用于开发期清理共享 dev 库；生产勿用）
-import { execFileSync } from "node:child_process";
-const ACCOUNT_ID = "332b848d9f5d9ec2808bdb855763eb8e";
-const DATABASE_ID = "3c83aee3-4645-450b-b50b-6488750deeb4";
-function getToken() {
-  try { return execFileSync("powershell.exe", ["-NoProfile", "-Command", "[Environment]::GetEnvironmentVariable('CLOUDFLARE_API_TOKEN','Machine')"]).toString().trim(); } catch (_) { return ""; }
-}
-const token = getToken();
-if (!token) { console.error("缺少 Token"); process.exit(1); }
+// 配置读环境变量 / 项目根 .env（见 scripts/config.mjs）。
+import { CF_API_TOKEN, CF_ACCOUNT_ID, D1_DATABASE_ID } from "./config.mjs";
+const ACCOUNT_ID = CF_ACCOUNT_ID();
+const DATABASE_ID = D1_DATABASE_ID();
+const token = CF_API_TOKEN();
 const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/d1/database/${DATABASE_ID}/query`;
 const stmts = [
   "DELETE FROM gm_maps WHERE user_id = (SELECT id FROM gm_users WHERE email='test@mindflow.dev')",

@@ -1,6 +1,6 @@
 // 仪表盘：列表 / 新建 / 分享 / 重命名 / 删除
 import { Auth, getMaps, createMap, saveMap, deleteMap, setShare, fmtDate, fmtSize, toast } from "./api.js";
-import { confirmDialog } from "./ui.js";
+import { confirmDialog, promptDialog } from "./ui.js";
 import { ICONS } from "./icons.js";
 import { TEMPLATES, emptyDoc } from "./templates.js";
 
@@ -77,11 +77,18 @@ async function onShare(m) {
 }
 
 async function onRename(m) {
-  const name = prompt("输入新标题", m.title);
-  if (!name) return;
+  const name = await promptDialog({
+    title: "重命名导图",
+    value: m.title,
+    maxlength: 80,
+    okText: "重命名",
+  });
+  if (name === null) return;
+  const next = name.trim();
+  if (!next || next === m.title) return;
   try {
-    await saveMap(m.id, { title: name });
-    m.title = name.slice(0, 80);
+    await saveMap(m.id, { title: next });
+    m.title = next.slice(0, 80);
     renderList();
     toast("已重命名", "success");
   } catch (e) { toast(e.message, "error"); }

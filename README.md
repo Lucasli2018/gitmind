@@ -25,7 +25,7 @@
 - 📋 **模板库**：读书笔记 / 项目计划 / 会议纪要 / 知识梳理 / 请假流程 / 白板涂鸦
 - 🔗 **分享链接**：一键生成公开只读页 `/share.html?id=<id>`
 - 📤 **导入导出**：PNG / SVG / JSON 导出，JSON 导入（兼容 simple-mind-map 导出格式）
-- 🛠 **增量迁移**：`scripts/migrate-r2-key.mjs`（补 `storage`/`r2_key`/`size` 列、`data` 放开为可 NULL、回填 size，幂等可重跑）；`scripts/fix-r2-content-type.mjs`（存量 R2 对象 Content-Type 统一刷为 `application/json; charset=utf-8`，幂等可重跑）；`scripts/deploy.mjs`（Machine 级 Token + `CLOUDFLARE_ACCOUNT_ID` 非交互部署）
+- 🛠 **增量迁移**：`scripts/migrate-r2-key.mjs`（补 `storage`/`r2_key`/`size` 列、`data` 放开为可 NULL、回填 size，幂等可重跑）；`scripts/fix-r2-content-type.mjs`（存量 R2 对象 Content-Type 统一刷为 `application/json; charset=utf-8`，幂等可重跑）；`scripts/deploy.mjs`（非交互部署）。脚本配置统一走 **环境变量 / 项目根 `.env`**（见 `scripts/config.mjs`，模板 `.env.example`，源码零硬编码）
 - 📝 **大纲模式**：文字大纲与脑图双向转换
 - 🖱️ **右键菜单（三模式通用）**：
   - 🧠 **思维导图**：回到根节点 / 展开全部 / 收起全部 / 展开到 N 级 / 一键整理布局 / 适应画布 / 禅模式 / 去除自定义样式 / 复制到剪贴板（PNG·SVG·JSON 子菜单）；节点折叠徽标（±）点击展开收起子树
@@ -60,8 +60,9 @@ gitmind/
 │   └── api/              # register / login / logout / me / maps CRUD / share
 ├── schema.sql            # D1 DDL（gm_users / gm_sessions / gm_maps）
 └── scripts/
+    ├── config.mjs        # 统一配置入口（环境变量 / 项目根 .env，模板 .env.example）
     ├── init-d1.mjs       # REST 方式把 schema 应用到共享 dev 库（幂等）
-    ├── deploy.mjs        # wrangler pages deploy（自动读 Machine 级 Token）
+    ├── deploy.mjs        # wrangler pages deploy（非交互）
     └── cleanup-test.mjs  # 清理测试数据
 ```
 
@@ -81,8 +82,11 @@ python -m http.server 8787
 
 ## 部署（Cloudflare Pages + D1）
 
+脚本配置统一读环境变量或项目根 `.env`（不入库；先复制 `.env.example` 填写）：
+`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` / `D1_DATABASE_ID`，可选 `R2_BUCKET`、`WRANGLER_BIN`（wrangler 入口，留空走 PATH）。
+
 ```bash
-# 1. 建表（幂等，读 Machine 级 CLOUDFLARE_API_TOKEN）
+# 1. 建表（幂等）
 node scripts/init-d1.mjs
 
 # 2. 部署
@@ -139,6 +143,10 @@ wrangler.toml 绑定：D1 → 共享 `dev` 库（database_name=dev）。
 
 
 ## 更新日志
+
+### 2026-10-28 · 技术债清理（配置 + 原生弹窗）
+- 脚本配置统一抽离 `scripts/config.mjs`：环境变量优先、其次项目根 `.env`（模板 `.env.example`），移除全部硬编码账号 ID / 数据库 ID / 机器路径与 `powershell` 读 Token 依赖，跨机器可复用
+- 原生 `prompt` / `confirm` / `alert` 全部清零：`ui.js` 新增 `promptDialog` 输入模态框；超链接、嵌入网页（新建与双击编辑）、重命名、清空白板改走模态框/确认框；导出与大纲的错误提示改用 toast；画布内核新增 `onEmbedEdit` 回调保持 UI 与内核解耦
 
 ### 2026-10-22 · 编辑器交互大升级
 - 三模式（思维导图 / 流程图 / 白板）统一右键菜单：覆盖展开收起、复制导出、锁定翻转组合、层级排序、统计等

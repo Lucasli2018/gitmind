@@ -1,4 +1,6 @@
 // 导入 / 导出：PNG / SVG / JSON
+import { toast } from "../api.js";
+
 function download(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -34,13 +36,13 @@ export function getExportSVG(editor) {
 
 export function exportSVG(editor, name) {
   const r = getExportSVG(editor);
-  if (!r) { alert("画布为空，无法导出"); return; }
+  if (!r) { toast("画布为空，无法导出", "error"); return; }
   download(new Blob([r.svg], { type: "image/svg+xml;charset=utf-8" }), `${name || "mindflow"}.svg`);
 }
 
 export function exportPNG(editor, name) {
   const r = getExportSVG(editor);
-  if (!r) { alert("画布为空，无法导出"); return; }
+  if (!r) { toast("画布为空，无法导出", "error"); return; }
   const blob = new Blob([r.svg], { type: "image/svg+xml;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const img = new Image();
@@ -53,7 +55,7 @@ export function exportPNG(editor, name) {
     ctx.drawImage(img, 0, 0);
     canvas.toBlob((b) => { download(b, `${name || "mindflow"}.png`); URL.revokeObjectURL(url); }, "image/png");
   };
-  img.onerror = () => { alert("PNG 导出失败"); URL.revokeObjectURL(url); };
+  img.onerror = () => { toast("PNG 导出失败", "error"); URL.revokeObjectURL(url); };
   img.src = url;
 }
 
@@ -98,7 +100,7 @@ export function importJSON(editor, file, onChange) {
       doc.view = doc.view || { x: 0, y: 0, scale: 1 };
       editor.load(doc);
       if (onChange) onChange();
-    } catch (e) { alert("导入失败：" + e.message); }
+    } catch (e) { toast("导入失败：" + e.message, "error"); }
   };
   reader.readAsText(file);
 }

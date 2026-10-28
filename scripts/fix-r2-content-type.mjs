@@ -1,27 +1,15 @@
-// 一次性修复：把 R2 桶 gitmind 中 maps/ 前缀下存量对象的 Content-Type
+// 一次性修复：把 R2 桶中 maps/ 前缀下存量对象的 Content-Type
 // 刷成 application/json; charset=utf-8（旧对象写入时未带类型，控制台显示 --）。
-// 幂等：已是目标类型（含 charset）的对象自动跳过。Token 读 Machine 级 CLOUDFLARE_API_TOKEN。
-import { execFileSync } from "node:child_process";
+// 幂等：已是目标类型（含 charset）的对象自动跳过。
+// 配置读环境变量 / 项目根 .env（见 scripts/config.mjs）。
+import { CF_API_TOKEN, CF_ACCOUNT_ID, R2_BUCKET } from "./config.mjs";
 
-const ACCOUNT_ID = "332b848d9f5d9ec2808bdb855763eb8e";
-const BUCKET = "gitmind";
+const ACCOUNT_ID = CF_ACCOUNT_ID();
+const BUCKET = R2_BUCKET();
 const TARGET_TYPE = "application/json; charset=utf-8";
 const PREFIX = "maps/";
 
-function getToken() {
-  try {
-    const t = execFileSync("powershell.exe", [
-      "-NoProfile",
-      "-Command",
-      "[Environment]::GetEnvironmentVariable('CLOUDFLARE_API_TOKEN','Machine')",
-    ]).toString().trim();
-    if (t) return t;
-  } catch (_) {}
-  return process.env.CLOUDFLARE_API_TOKEN || "";
-}
-
-const token = getToken();
-if (!token) { console.error("缺少 CLOUDFLARE_API_TOKEN"); process.exit(1); }
+const token = CF_API_TOKEN();
 const base = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/r2/buckets/${BUCKET}`;
 let cursor = "";
 
