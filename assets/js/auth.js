@@ -11,13 +11,13 @@ async function afterAuth() {
     if (t) {
       try {
         const map = await createMap(t.name, t.type, t.build());
-        location.href = `/editor.html?id=${map.id}`;
+        location.href = `editor.html?id=${map.id}`;
         return;
       } catch (e) { toast(e.message, "error"); }
     }
   }
   const next = params.get("next");
-  location.href = next || "/dashboard.html";
+  location.href = next || "dashboard.html";
 }
 
 const form = document.getElementById("form");

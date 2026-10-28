@@ -1895,8 +1895,8 @@ function wireKeys() {
 // ---------- 启动 ----------
 (async () => {
   const user = await Auth.me().catch(() => null);
-  if (!user) { location.href = `/login.html?next=${encodeURIComponent("/editor.html?id=" + mapId)}`; return; }
-  if (!mapId) { location.href = "/dashboard.html"; return; }
+  if (!user) { location.href = `login.html?next=${encodeURIComponent("editor.html?id=" + mapId)}`; return; }
+  if (!mapId) { location.href = "dashboard.html"; return; }
 
   try {
     map = await getMap(mapId);

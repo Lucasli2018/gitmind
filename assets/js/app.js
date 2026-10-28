@@ -14,14 +14,14 @@ const ctaStart = document.getElementById("ctaStart");
 function renderNav(user) {
   if (user) {
     navAuth.innerHTML =
-      `<a class="btn btn-ghost btn-sm" href="/dashboard.html">我的导图</a>` +
+      `<a class="btn btn-ghost btn-sm" href="dashboard.html">我的导图</a>` +
       `<span class="avatar" title="${user.nickname || user.email}">${(user.nickname || user.email)[0].toUpperCase()}</span>`;
     ctaStart.textContent = "进入工作台";
-    ctaStart.setAttribute("href", "/dashboard.html");
+    ctaStart.setAttribute("href", "dashboard.html");
   } else {
     navAuth.innerHTML =
-      `<a class="btn btn-ghost btn-sm" href="/login.html">登录</a>` +
-      `<a class="btn btn-primary btn-sm" href="/register.html">注册</a>`;
+      `<a class="btn btn-ghost btn-sm" href="login.html">登录</a>` +
+      `<a class="btn btn-primary btn-sm" href="register.html">注册</a>`;
   }
 }
 
@@ -43,12 +43,12 @@ function renderTemplates() {
 async function onPick(t) {
   const user = await Auth.me().catch(() => null);
   if (!user) {
-    location.href = `/login.html?tpl=${t.id}`;
+    location.href = `login.html?tpl=${t.id}`;
     return;
   }
   try {
     const map = await createMap(t.name, t.type, t.build());
-    location.href = `/editor.html?id=${map.id}`;
+    location.href = `editor.html?id=${map.id}`;
   } catch (e) {
     toast(e.message, "error");
   }

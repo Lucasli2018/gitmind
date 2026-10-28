@@ -49,7 +49,7 @@ function renderList() {
         `<button class="btn btn-ghost btn-sm" data-act="rename">改名</button>` +
         `<button class="btn btn-danger btn-sm" data-act="del">删除</button>` +
       `</div>`;
-    card.querySelector('[data-act="open"]').addEventListener("click", () => { location.href = `/editor.html?id=${m.id}`; });
+    card.querySelector('[data-act="open"]').addEventListener("click", () => { location.href = `editor.html?id=${m.id}`; });
     card.querySelector('[data-act="share"]').addEventListener("click", () => onShare(m));
     card.querySelector('[data-act="rename"]').addEventListener("click", () => onRename(m));
     card.querySelector('[data-act="del"]').addEventListener("click", () => onDelete(m));
@@ -117,7 +117,7 @@ document.querySelectorAll("#typeGrid .opt").forEach((opt) => {
     newMask.style.display = "none";
     try {
       const map = await createMap("未命名导图", type, emptyDoc(type));
-      location.href = `/editor.html?id=${map.id}`;
+      location.href = `editor.html?id=${map.id}`;
     } catch (e) { toast(e.message, "error"); }
   });
 });
@@ -131,7 +131,7 @@ for (const t of TEMPLATES) {
     newMask.style.display = "none";
     try {
       const map = await createMap(t.name, t.type, t.build());
-      location.href = `/editor.html?id=${map.id}`;
+      location.href = `editor.html?id=${map.id}`;
     } catch (e) { toast(e.message, "error"); }
   });
   tplChips.appendChild(chip);
@@ -148,7 +148,7 @@ document.querySelectorAll("#filter button").forEach((b) => {
 
 (async () => {
   const user = await Auth.me().catch(() => null);
-  if (!user) { location.href = "/login.html?next=/dashboard.html"; return; }
+  if (!user) { location.href = "login.html?next=dashboard.html"; return; }
   renderNav(user);
   try {
     maps = await getMaps();
