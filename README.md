@@ -2,7 +2,7 @@
 
 一个类 GitMind 的在线思维导图网站，纯前端零构建 + Cloudflare Pages + Functions + D1，支持账号注册登录与云端存储。
 
-**线上地址**：<https://master.gitmind-48x.pages.dev>
+**线上地址**：<https://gitmind-48x.pages.dev>
 
 ## 功能特性
 
@@ -137,9 +137,6 @@ wrangler.toml 绑定：D1 → 共享 `dev` 库（database_name=dev）。
 | Ctrl+' | 显示 / 隐藏网格 |
 | Alt+/ | 详细统计信息 |
 
-## Git 提交约定
-
-提交身份 `lucasli <1906859953@qq.com>`，推送到 Gitee `li-luoqiang/gitmind`。
 
 ## 更新日志
 
