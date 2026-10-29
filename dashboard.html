@@ -31,6 +31,11 @@
     <main class="dash-main">
       <div class="dash-head">
         <h1 id="crumbTitle">我的导图</h1>
+        <form class="search" id="searchForm" role="search">
+          <span class="s-ico">🔍</span>
+          <input id="search" type="search" placeholder="搜索导图名称 / 类型…" autocomplete="off" />
+          <button type="button" class="s-clear" id="searchClear" title="清除" hidden>×</button>
+        </form>
         <div class="seg" id="filter">
           <button class="active" data-f="all">全部</button>
           <button data-f="mindmap">脑图</button>

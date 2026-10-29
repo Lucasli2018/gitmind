@@ -153,6 +153,13 @@ input, textarea, select { font-family: inherit; }
 .dash-head { display: flex; align-items: center; gap: 14px; margin-bottom: 26px; flex-wrap: wrap; }
 .dash-head h1 { font-size: 26px; margin: 0; font-weight: 800; }
 .dash-head .spacer { flex: 1; }
+.search { position: relative; flex: 1 1 240px; max-width: 340px; display: flex; align-items: center; gap: 6px; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 0 12px; height: 38px; transition: border-color .12s, box-shadow .12s; }
+.search:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.search .s-ico { font-size: 14px; color: var(--ink-3); flex: 0 0 auto; }
+.search input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-size: 14px; color: var(--ink); height: 100%; }
+.search input::placeholder { color: var(--ink-3); }
+.search .s-clear { border: none; background: #eef2f6; color: var(--ink-3); width: 20px; height: 20px; border-radius: 50%; font-size: 14px; line-height: 1; cursor: pointer; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; }
+.search .s-clear:hover { background: #e2e8f0; color: var(--ink); }
 .seg { display: inline-flex; background: #eef2f6; border-radius: 999px; padding: 4px; }
 .seg button { border: none; background: transparent; padding: 7px 16px; border-radius: 999px; font-size: 14px; font-weight: 600; color: var(--ink-2); }
 .seg button.active { background: #fff; color: var(--brand-700); box-shadow: var(--shadow-sm); }
@@ -214,6 +221,7 @@ footer.site { border-top: 1px solid var(--line); padding: 28px 0; color: var(--i
   /* 仪表盘：标题 / 筛选 / 新建 换行堆叠 */
   .dash-head { gap: 10px; }
   .dash-head h1 { font-size: 21px; width: 100%; }
+  .search { width: 100%; max-width: none; }
   .seg { width: 100%; }
   .seg button { flex: 1; padding: 7px 6px; font-size: 12px; }
   .dash-head .spacer { display: none; }
@@ -337,6 +345,7 @@ footer.site { border-top: 1px solid var(--line); padding: 28px 0; color: var(--i
 .crumb-item.current { color: var(--ink); font-weight: 700; cursor: default; }
 .crumb-sep { color: var(--ink-3); margin: 0 2px; }
 
+.map-card .map-path { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
 .map-card.folder-card .folder-prev { font-size: 48px; background: linear-gradient(135deg, #fff3ec, #fdeef3); color: var(--coral); }
 .map-card.dragging { opacity: .5; }
 .map-card.folder-card { cursor: default; }

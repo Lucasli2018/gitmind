@@ -12,6 +12,7 @@ const navAuth = document.getElementById("navAuth");
 let maps = [];
 let folders = [];
 let filter = "all";
+let search = "";   // 搜索关键词：非空时全局搜导图（跨文件夹）并带路径标签
 // 当前视图：null=全部 / '__uncat__'=未分类 / <folderId>=某个文件夹
 let currentFolder = null;
 const expanded = new Set();   // 已展开的文件夹 id
@@ -45,6 +46,12 @@ function childFolders(id) {
   return folders.filter((f) => f.parent_id === id);
 }
 function directCount(id) { return maps.filter((m) => m.folder_id === id).length; }
+
+// 导图所属文件夹名称（用于搜索结果展示路径）
+function mapPathName(folderId) {
+  if (!folderId) return "未分类";
+  return folderMap().get(folderId)?.name || "未分类";
+}
 
 // ===================== 侧栏文件夹树 =====================
 function renderSidebar() {
@@ -104,6 +111,7 @@ function sideRow({ id, name, icon, count, depth, virtual, hasChildren }) {
     if (hasChildren && e.target.closest(".tw-caret:not(.leaf)")) {
       toggleExpand(id); return;
     }
+    clearSearch();
     currentFolder = id;
     renderSidebar(); renderBreadcrumb(); renderList();
   });
@@ -140,6 +148,7 @@ function renderBreadcrumb() {
   const crumb = document.getElementById("crumb");
   const title = document.getElementById("crumbTitle");
   crumb.innerHTML = "";
+  if (search.trim()) { title.textContent = `搜索：${search.trim()}`; return; }
   const parts = [];
   if (currentFolder === null) { parts.push({ id: null, name: "全部" }); }
   else if (currentFolder === V_UNCAT) { parts.push({ id: null, name: "全部" }, { id: V_UNCAT, name: "未分类" }); }
@@ -148,7 +157,7 @@ function renderBreadcrumb() {
     const a = document.createElement("span");
     a.className = "crumb-item" + (i === parts.length - 1 ? " current" : "");
     a.textContent = p.name;
-    a.addEventListener("click", () => { currentFolder = p.id; renderSidebar(); renderBreadcrumb(); renderList(); });
+    a.addEventListener("click", () => { clearSearch(); currentFolder = p.id; renderSidebar(); renderBreadcrumb(); renderList(); });
     crumb.appendChild(a);
     if (i < parts.length - 1) {
       const sep = document.createElement("span");
@@ -162,12 +171,25 @@ function renderBreadcrumb() {
 // ===================== 列表（子文件夹卡片 + 导图卡片） =====================
 function renderList() {
   const list = document.getElementById("list");
-  const viewMaps = mapsInFolder(currentFolder).filter((m) => filter === "all" || m.type === filter);
-  const subFolders = currentFolder && currentFolder !== V_UNCAT ? childFolders(currentFolder) : [];
+  const kw = search.trim().toLowerCase();
+  const searching = kw.length > 0;
+  let viewMaps, subFolders;
+  if (searching) {
+    // 全局搜索：标题 / 类型名 / 类型值 模糊匹配，并保留类型筛选
+    viewMaps = maps.filter((m) =>
+      m.title.toLowerCase().includes(kw) ||
+      (TYPE_NAME[m.type] || "").toLowerCase().includes(kw) ||
+      (m.type || "").toLowerCase().includes(kw)
+    ).filter((m) => filter === "all" || m.type === filter);
+    subFolders = [];   // 搜索时不展示子文件夹卡片，聚焦导图结果
+  } else {
+    viewMaps = mapsInFolder(currentFolder).filter((m) => filter === "all" || m.type === filter);
+    subFolders = currentFolder && currentFolder !== V_UNCAT ? childFolders(currentFolder) : [];
+  }
 
   if (!subFolders.length && !viewMaps.length) {
     list.className = "";
-    list.innerHTML = `<div class="empty">${ICONS.folder}<div>这里还没有内容，点右上角「新建导图」或左侧「+ 新建」文件夹吧～</div></div>`;
+    list.innerHTML = `<div class="empty">${ICONS.folder}<div>${searching ? `没有匹配「${escapeHtml(search.trim())}」的导图` : "这里还没有内容，点右上角「新建导图」或左侧「+ 新建」文件夹吧～"}</div></div>`;
     return;
   }
   list.className = "grid cols-4";
@@ -185,7 +207,7 @@ function renderList() {
         `<button class="btn btn-ghost btn-sm" data-act="rename">改名</button>` +
         `<button class="btn btn-danger btn-sm" data-act="del">删除</button>` +
       `</div>`;
-    card.querySelector('[data-act="open"]').addEventListener("click", () => { currentFolder = f.id; expanded.add(f.id); renderSidebar(); renderBreadcrumb(); renderList(); });
+    card.querySelector('[data-act="open"]').addEventListener("click", () => { clearSearch(); currentFolder = f.id; expanded.add(f.id); renderSidebar(); renderBreadcrumb(); renderList(); });
     card.querySelector('[data-act="rename"]').addEventListener("click", () => onRenameFolder(f.id));
     card.querySelector('[data-act="del"]').addEventListener("click", () => onDeleteFolder(f.id));
     list.appendChild(card);
@@ -195,10 +217,12 @@ function renderList() {
     const card = document.createElement("div");
     card.className = "map-card";
     card.draggable = true;
+    const pathLabel = searching ? `<div class="map-path">📁 ${escapeHtml(mapPathName(m.folder_id))}</div>` : "";
     card.innerHTML =
       `<div class="preview">${TYPE_ICON[m.type] || ICONS.mindmap}</div>` +
       `<div class="meta">` +
         `<h3>${escapeHtml(m.title)} ${m.is_public ? '<span class="pub">公开</span>' : ""}</h3>` +
+        pathLabel +
         `<div class="time">${TYPE_NAME[m.type] || ""} · 更新 ${fmtDate(m.updated_at)}${m.size ? " · " + fmtSize(m.size) : ""}</div>` +
       `</div>` +
       `<div class="acts">` +
@@ -418,6 +442,25 @@ document.querySelectorAll("#filter button").forEach((b) => {
     renderList();
   });
 });
+
+// ===================== 搜索 =====================
+const searchForm = document.getElementById("searchForm");
+const searchInput = document.getElementById("search");
+const searchClear = document.getElementById("searchClear");
+searchForm.addEventListener("submit", (e) => e.preventDefault());
+searchInput.addEventListener("input", () => {
+  search = searchInput.value;
+  searchClear.hidden = !search;
+  renderBreadcrumb(); renderList();
+});
+searchClear.addEventListener("click", () => {
+  search = ""; searchInput.value = ""; searchClear.hidden = true;
+  renderBreadcrumb(); renderList(); searchInput.focus();
+});
+function clearSearch() {
+  if (!search) return;
+  search = ""; searchInput.value = ""; searchClear.hidden = true;
+}
 
 // ===================== 启动 =====================
 (async () => {
