@@ -62,12 +62,18 @@ function renderSidebar() {
 }
 
 function renderNode(folder, depth) {
-  const node = sideRow({
+  // 子节点包进独立容器，避免塞进父行 flex 布局导致样式错乱
+  const node = document.createElement("div");
+  node.className = "tree-node";
+  node.appendChild(sideRow({
     id: folder.id, name: folder.name, icon: "📁", count: directCount(folder.id), depth,
     hasChildren: childFolders(folder.id).length > 0,
-  });
+  }));
   if (expanded.has(folder.id)) {
-    for (const c of childFolders(folder.id)) node.appendChild(renderNode(c, depth + 1));
+    const kids = document.createElement("div");
+    kids.className = "tree-children";
+    for (const c of childFolders(folder.id)) kids.appendChild(renderNode(c, depth + 1));
+    node.appendChild(kids);
   }
   return node;
 }
@@ -79,7 +85,7 @@ function sideRow({ id, name, icon, count, depth, virtual, hasChildren }) {
   row.dataset.virtual = virtual ? "1" : "";
   row.style.paddingLeft = (10 + depth * 16) + "px";
   const isOpen = id && expanded.has(id);
-  const caret = hasChildren ? `<span class="tw-caret">${isOpen ? "▾" : "▸"}</span>` : `<span class="tw-caret empty"></span>`;
+  const caret = hasChildren ? `<span class="tw-caret">${isOpen ? "▾" : "▸"}</span>` : `<span class="tw-caret leaf"></span>`;
   row.innerHTML =
     caret +
     `<span class="tw-ico">${icon}</span>` +
@@ -95,7 +101,7 @@ function sideRow({ id, name, icon, count, depth, virtual, hasChildren }) {
   // 点击整行（非操作按钮）跳转
   row.addEventListener("click", (e) => {
     if (e.target.closest(".tw-acts")) return;
-    if (hasChildren && e.target.closest(".tw-caret:not(.empty)")) {
+    if (hasChildren && e.target.closest(".tw-caret:not(.leaf)")) {
       toggleExpand(id); return;
     }
     currentFolder = id;
@@ -388,6 +394,21 @@ for (const t of TEMPLATES) {
 }
 
 document.getElementById("newFolderBtn").addEventListener("click", () => onNewFolder(null));
+
+// ===================== 侧栏整体收缩 =====================
+const sidebar = document.getElementById("sidebar");
+const sideToggle = document.getElementById("sideToggle");
+function applySideCollapsed(c) {
+  sidebar.classList.toggle("collapsed", c);
+  sideToggle.textContent = c ? "»" : "«";
+  sideToggle.title = c ? "展开文件夹栏" : "收起文件夹栏";
+}
+try { applySideCollapsed(localStorage.getItem("gm_side_collapsed") === "1"); } catch (_) { applySideCollapsed(false); }
+sideToggle.addEventListener("click", () => {
+  const c = sidebar.classList.toggle("collapsed");
+  try { localStorage.setItem("gm_side_collapsed", c ? "1" : "0"); } catch (_) {}
+  applySideCollapsed(c);
+});
 
 document.querySelectorAll("#filter button").forEach((b) => {
   b.addEventListener("click", () => {

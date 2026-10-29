@@ -160,6 +160,11 @@ wrangler.toml 绑定：D1 → 共享 `dev` 库（database_name=dev）。
 
 ## 更新日志
 
+### 2026-10-29 · 侧栏体验修复
+- 修复侧栏行高异常：`.tw-caret.empty` 误中全局空状态样式 `.empty`（padding 60px）导致无子级行被撑高，改名为 `.tw-caret.leaf`
+- 展开的子文件夹节点包进 `.tree-children` 容器，不再直接塞进父行 flex 布局
+- 侧栏支持整体收缩（«/» 开关，状态存 `localStorage`），移动端适配
+
 ### 2026-10-29 · 文件夹层级管理
 - 新增 `gm_folders` 表（支持 `parent_id` 多级嵌套）+ `gm_maps.folder_id` 列；迁移走既有「中间件首访幂等建表 + PRAGMA 补列」通道（`_middleware.js` / `schema.sql`），存量库自动补齐，无需手动跑脚本
 - 后端 `functions/api/folders.js` + `folders/[id].js`：文件夹列表 / 新建 / 重命名 / 移动（防环）/ 删除（级联上移子项，不丢数据）
