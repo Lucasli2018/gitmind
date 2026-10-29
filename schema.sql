@@ -27,6 +27,17 @@ CREATE TABLE IF NOT EXISTS gm_maps (
   storage    TEXT NOT NULL DEFAULT 'd1',
   r2_key     TEXT,
   size       INTEGER NOT NULL DEFAULT 0,
+  folder_id  TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+-- 文件夹（层级结构：parent_id 为空表示根级文件夹）
+CREATE TABLE IF NOT EXISTS gm_folders (
+  id         TEXT PRIMARY KEY,
+  user_id    INTEGER NOT NULL,
+  name       TEXT NOT NULL DEFAULT '未命名文件夹',
+  parent_id  TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -34,3 +45,6 @@ CREATE TABLE IF NOT EXISTS gm_maps (
 CREATE INDEX IF NOT EXISTS gm_idx_sessions_user  ON gm_sessions(user_id);
 CREATE INDEX IF NOT EXISTS gm_idx_maps_user      ON gm_maps(user_id);
 CREATE INDEX IF NOT EXISTS gm_idx_maps_public    ON gm_maps(is_public);
+CREATE INDEX IF NOT EXISTS gm_idx_maps_folder    ON gm_maps(folder_id);
+CREATE INDEX IF NOT EXISTS gm_idx_folders_user   ON gm_folders(user_id);
+CREATE INDEX IF NOT EXISTS gm_idx_folders_parent ON gm_folders(user_id, parent_id);

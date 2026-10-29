@@ -16,19 +16,32 @@
     <span id="navAuth"></span>
   </nav>
 
-  <main class="container section tight">
-    <div class="dash-head">
-      <h1>我的导图</h1>
-      <div class="seg" id="filter">
-        <button class="active" data-f="all">全部</button>
-        <button data-f="mindmap">脑图</button>
-        <button data-f="flowchart">流程图</button>
-        <button data-f="whiteboard">白板</button>
+  <div class="dash-layout">
+    <!-- 左侧文件夹树 -->
+    <aside class="sidebar" id="sidebar">
+      <div class="side-head">
+        <span class="side-title">文件夹</span>
+        <button class="btn btn-soft btn-sm" id="newFolderBtn">+ 新建</button>
       </div>
-      <span class="spacer"></span>
-    </div>
-    <div id="list"></div>
-  </main>
+      <div class="side-tree" id="tree"></div>
+    </aside>
+
+    <!-- 右侧主区 -->
+    <main class="dash-main">
+      <div class="dash-head">
+        <h1 id="crumbTitle">我的导图</h1>
+        <div class="seg" id="filter">
+          <button class="active" data-f="all">全部</button>
+          <button data-f="mindmap">脑图</button>
+          <button data-f="flowchart">流程图</button>
+          <button data-f="whiteboard">白板</button>
+        </div>
+        <span class="spacer"></span>
+      </div>
+      <div class="breadcrumb" id="crumb"></div>
+      <div id="list"></div>
+    </main>
+  </div>
 
   <div class="modal-mask" id="newMask" style="display:none">
     <div class="modal">

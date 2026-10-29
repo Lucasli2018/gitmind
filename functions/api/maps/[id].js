@@ -26,7 +26,7 @@ export async function onRequestGet({ request, env, params }) {
   return json({
     map: {
       id: row.id, title: row.title, type: row.type, data,
-      is_public: row.is_public, created_at: row.created_at, updated_at: row.updated_at,
+      is_public: row.is_public, folder_id: row.folder_id, created_at: row.created_at, updated_at: row.updated_at,
       size: row.size > 0 ? row.size : null,
       owner: !!(u && u.id === row.user_id),
     },
@@ -45,6 +45,15 @@ export async function onRequestPut({ request, env, params }) {
   const binds = [];
   if (typeof body.title === "string") { sets.push("title=?"); binds.push(body.title.toString().slice(0, 80)); }
   if (typeof body.is_public === "boolean") { sets.push("is_public=?"); binds.push(body.is_public ? 1 : 0); }
+  if (body.folder_id !== undefined) {
+    let folderId = null;
+    if (body.folder_id) {
+      const f = await env.DB.prepare("SELECT id FROM gm_folders WHERE id=? AND user_id=?")
+        .bind(body.folder_id, u.id).first();
+      if (f) folderId = f.id;
+    }
+    sets.push("folder_id=?"); binds.push(folderId);
+  }
   if (sets.length > 0) {
     sets.push("updated_at=?");
     binds.push(Date.now());

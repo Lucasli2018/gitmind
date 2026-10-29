@@ -27,9 +27,20 @@ const SCHEMA = [
      created_at INTEGER NOT NULL,
      updated_at INTEGER NOT NULL
    )`,
+  `CREATE TABLE IF NOT EXISTS gm_folders (
+     id TEXT PRIMARY KEY,
+     user_id INTEGER NOT NULL,
+     name TEXT NOT NULL DEFAULT '未命名文件夹',
+     parent_id TEXT,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   )`,
   `CREATE INDEX IF NOT EXISTS gm_idx_sessions_user ON gm_sessions(user_id)`,
   `CREATE INDEX IF NOT EXISTS gm_idx_maps_user ON gm_maps(user_id)`,
   `CREATE INDEX IF NOT EXISTS gm_idx_maps_public ON gm_maps(is_public)`,
+  `CREATE INDEX IF NOT EXISTS gm_idx_maps_folder ON gm_maps(folder_id)`,
+  `CREATE INDEX IF NOT EXISTS gm_idx_folders_user ON gm_folders(user_id)`,
+  `CREATE INDEX IF NOT EXISTS gm_idx_folders_parent ON gm_folders(user_id, parent_id)`,
 ];
 
 let ready = false;
@@ -46,7 +57,17 @@ async function ensure(env) {
       for (const sql of SCHEMA) await env.DB.prepare(sql).run();
       console.log("[middleware] 已初始化 gm_ 表");
     } else {
-      // 兼容已部署库：补 storage / r2_key / size 列
+      // 兼容已部署库：补 storage / r2_key / size / folder_id 列，并确保 gm_folders 表存在
+      try {
+        await env.DB.prepare(
+          "CREATE TABLE IF NOT EXISTS gm_folders (" +
+          "id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '未命名文件夹'," +
+          "parent_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"
+        ).run();
+        await env.DB.prepare("CREATE INDEX IF NOT EXISTS gm_idx_folders_user ON gm_folders(user_id)").run();
+        await env.DB.prepare("CREATE INDEX IF NOT EXISTS gm_idx_folders_parent ON gm_folders(user_id, parent_id)").run();
+        console.log("[middleware] 已确保 gm_folders 表存在");
+      } catch (e) { console.error("[middleware] 建 gm_folders 失败(忽略):", e); }
       try {
         const cols = await env.DB.prepare("PRAGMA table_info(gm_maps)").all();
         const names = (cols.results || []).map((c) => c.name);
@@ -67,6 +88,12 @@ async function ensure(env) {
             "ALTER TABLE gm_maps ADD COLUMN size INTEGER NOT NULL DEFAULT 0"
           ).run();
           console.log("[middleware] 已为 gm_maps 补 size 列");
+        }
+        if (!names.includes("folder_id")) {
+          await env.DB.prepare(
+            "ALTER TABLE gm_maps ADD COLUMN folder_id TEXT"
+          ).run();
+          console.log("[middleware] 已为 gm_maps 补 folder_id 列");
         }
       } catch (e) {
         console.error("[middleware] 补列失败(忽略):", e);

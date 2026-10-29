@@ -283,3 +283,63 @@ footer.site { border-top: 1px solid var(--line); padding: 28px 0; color: var(--i
 .gm-fp-sec { font-size: 13px; font-weight: 700; color: var(--ink-2); text-align: center; margin: 10px 0 4px; }
 .gm-fp-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--ink-3); padding: 2.5px 0; }
 .gm-fp-row b { color: var(--ink); font-weight: 600; }
+
+/* ===================== 仪表盘：文件夹层级布局 ===================== */
+.dash-layout { display: flex; align-items: flex-start; max-width: 1280px; margin: 0 auto; padding: 0 24px; gap: 24px; }
+.sidebar {
+  position: sticky; top: 72px; flex: 0 0 240px; align-self: flex-start;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 10px; box-shadow: var(--shadow-sm); max-height: calc(100vh - 96px); overflow-y: auto;
+}
+.side-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 6px 10px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+.side-title { font-size: 14px; font-weight: 800; color: var(--ink); }
+.side-tree { display: flex; flex-direction: column; gap: 2px; }
+
+.tree-row {
+  display: flex; align-items: center; gap: 6px; padding: 7px 8px; border-radius: 9px;
+  font-size: 14px; color: var(--ink-2); cursor: pointer; transition: background .12s, color .12s; user-select: none;
+}
+.tree-row:hover { background: var(--brand-soft); color: var(--brand-700); }
+.tree-row.active { background: var(--brand-soft); color: var(--brand-700); font-weight: 700; }
+.tree-row.drop { background: var(--coral-soft); color: var(--coral); box-shadow: inset 0 0 0 2px var(--coral); }
+.tw-caret { width: 14px; text-align: center; font-size: 11px; color: var(--ink-3); flex: 0 0 auto; }
+.tw-caret.empty { visibility: hidden; }
+.tw-ico { font-size: 15px; flex: 0 0 auto; }
+.tw-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-count { font-size: 12px; color: var(--ink-3); background: #eef2f6; border-radius: 999px; padding: 0 8px; min-width: 22px; text-align: center; }
+.tree-row.active .tw-count { background: #fff; }
+.tw-acts { display: none; gap: 2px; flex: 0 0 auto; }
+.tree-row:hover .tw-acts { display: flex; }
+.tw-acts button {
+  border: none; background: transparent; color: var(--ink-3); width: 22px; height: 22px; border-radius: 6px;
+  font-size: 13px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;
+}
+.tw-acts button:hover { background: #fff; color: var(--brand-700); }
+.tw-acts button[data-act="del"]:hover { color: #e5484d; }
+
+.dash-main { flex: 1; min-width: 0; padding: 40px 0; }
+.breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 18px; font-size: 14px; color: var(--ink-3); }
+.crumb-item { cursor: pointer; color: var(--ink-3); transition: color .12s; }
+.crumb-item:hover { color: var(--brand-700); }
+.crumb-item.current { color: var(--ink); font-weight: 700; cursor: default; }
+.crumb-sep { color: var(--ink-3); margin: 0 2px; }
+
+.map-card.folder-card .folder-prev { font-size: 48px; background: linear-gradient(135deg, #fff3ec, #fdeef3); color: var(--coral); }
+.map-card.dragging { opacity: .5; }
+.map-card.folder-card { cursor: default; }
+
+/* 移动选择器弹层 */
+.move-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; max-height: 50vh; }
+.move-opt {
+  display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 9px; font-size: 14px; color: var(--ink-2);
+  cursor: pointer; transition: background .12s, color .12s;
+}
+.move-opt:hover { background: var(--brand-soft); color: var(--brand-700); }
+.move-opt .tw-ico { font-size: 15px; }
+
+/* 移动端：侧栏转顶部横向滚动条 */
+@media (max-width: 920px) {
+  .dash-layout { flex-direction: column; padding: 0 16px; gap: 14px; }
+  .sidebar { position: static; flex: none; width: 100%; max-height: 220px; }
+  .dash-main { padding: 16px 0 40px; width: 100%; }
+}

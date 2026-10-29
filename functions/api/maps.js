@@ -7,7 +7,7 @@ export async function onRequestGet({ request, env }) {
   const u = await parseUser(env, request);
   if (!u) return json({ error: "未登录" }, 401);
   const rows = await env.DB.prepare(
-    "SELECT id,title,type,is_public,created_at,updated_at," +
+    "SELECT id,title,type,is_public,folder_id,created_at,updated_at," +
     "CASE WHEN size>0 THEN size ELSE LENGTH(CAST(data AS BLOB)) END AS size " +
     "FROM gm_maps WHERE user_id=? ORDER BY updated_at DESC"
   ).bind(u.id).all();
@@ -23,11 +23,18 @@ export async function onRequestPost({ request, env }) {
   const id = crypto.randomUUID();
   const now = Date.now();
   const data = body.data ? JSON.stringify(body.data) : "{}";
+  // folder_id 校验：必须属于本人，否则忽略（落到根级/未分类）
+  let folderId = null;
+  if (body.folder_id) {
+    const f = await env.DB.prepare("SELECT id FROM gm_folders WHERE id=? AND user_id=?")
+      .bind(body.folder_id, u.id).first();
+    if (f) folderId = f.id;
+  }
   // 元数据入库（storage 默认 d1，内容由 putMapData 决定主存储位并双写兜底）
   await env.DB.prepare(
-    "INSERT INTO gm_maps(id,user_id,title,type,data,is_public,storage,created_at,updated_at) VALUES(?,?,?,?,?,0,'d1',?,?)"
-  ).bind(id, u.id, title, type, data, now, now).run();
+    "INSERT INTO gm_maps(id,user_id,title,type,data,is_public,storage,folder_id,created_at,updated_at) VALUES(?,?,?,?,?,0,'d1',?,?,?)"
+  ).bind(id, u.id, title, type, data, folderId, now, now).run();
   // 内容优先写 R2（R2 不可用时自动兜底 D1）
   await putMapData(env, id, data, u.id);
-  return json({ map: { id, title, type, is_public: 0, created_at: now, updated_at: now } });
+  return json({ map: { id, title, type, folder_id: folderId, is_public: 0, created_at: now, updated_at: now } });
 }

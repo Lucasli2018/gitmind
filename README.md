@@ -56,8 +56,10 @@ gitmind/
 │           ├── flowchart.js / whiteboard.js / outline.js / export.js
 │           └── main.js       # 编辑器入口 / 保存 / 工具栏 / 快捷键
 ├── functions/
-│   ├── _middleware.js    # 首访幂等建表 + 播种默认账号
-│   └── api/              # register / login / logout / me / maps CRUD / share
+│   ├── _middleware.js    # 首访幂等建表（gm_users/gm_sessions/gm_maps/gm_folders）+ 存量库 PRAGMA 补列
+│   └── api/              # register / login / logout / me / maps CRUD / share / folders CRUD
+│       ├── folders.js        # GET 列表 / POST 新建（支持 parent_id 嵌套）
+│       └── folders/[id].js   # PATCH 重命名·移动（防环）/ DELETE 级联上移
 ├── schema.sql            # D1 DDL（gm_users / gm_sessions / gm_maps）
 └── scripts/
     ├── config.mjs        # 统一配置入口（环境变量 / 项目根 .env，模板 .env.example）
@@ -71,6 +73,20 @@ gitmind/
 - `gm_maps.data` 存整张图 JSON：`{ type, nodes[], edges[], strokes[], view }`
   - `nodes[]`：`{ id, text, x, y, shape, color, textColor, stroke, fontSize, parentId }`
   - 脑图连线不落库，渲染时按 `parentId` 实时派生；流程图连线存 `edges[]`
+- `gm_maps.folder_id`：导图归属的文件夹（NULL = 未分类）
+- `gm_folders`：文件夹层级表，`parent_id` 为空表示根级文件夹，可为空形成多级嵌套
+
+## 文件夹 / 层级管理
+
+看板（`dashboard.html`）支持把导图归类进文件夹，便于管理大量导图：
+
+- 📁 **文件夹树侧栏**：左侧树状展示全部文件夹（可折叠、显示导图计数、选中高亮），根级附带「全部 / 未分类」两个虚拟入口
+- 🪄 **多级嵌套**：文件夹可建子文件夹（`parent_id` 链式），移动时后端做防环校验
+- ➕ **新建 / 重命名 / 删除**：侧栏每行 hover 出现「＋ 子文件夹 / ✎ 改名 / 🗑 删除」；删除文件夹会级联把其下导图与子文件夹上移到上级（或根级），不丢数据
+- 🍞 **面包屑导航**：顶部路径 `全部 › A › B`，点击任一级跳回
+- 📂 **当前文件夹视图**：进入文件夹后，先展示子文件夹卡片，再展示其中的导图；类型筛选（脑图/流程图/白板）在当前范围内生效
+- 📦 **移动到**：导图卡片「移动」按钮弹出文件夹选择器，或直接将卡片拖拽到侧栏文件夹归类（拖到「未分类」移出文件夹）
+- 🆕 **就近新建**：在某文件夹内点「新建导图」，新导图默认归入当前文件夹
 
 ## 本地开发
 
@@ -143,6 +159,12 @@ wrangler.toml 绑定：D1 → 共享 `dev` 库（database_name=dev）。
 
 
 ## 更新日志
+
+### 2026-10-29 · 文件夹层级管理
+- 新增 `gm_folders` 表（支持 `parent_id` 多级嵌套）+ `gm_maps.folder_id` 列；迁移走既有「中间件首访幂等建表 + PRAGMA 补列」通道（`_middleware.js` / `schema.sql`），存量库自动补齐，无需手动跑脚本
+- 后端 `functions/api/folders.js` + `folders/[id].js`：文件夹列表 / 新建 / 重命名 / 移动（防环）/ 删除（级联上移子项，不丢数据）
+- `maps` API 的 GET/POST/PUT 全面支持 `folder_id`（新建时归类、PUT 移动、列表返回归属）
+- 看板大改：左侧文件夹树侧栏（折叠·计数·高亮）、面包屑导航、当前文件夹视图（子文件夹卡片 + 导图）、导图「移动到」选择器 + 拖拽归类、就近新建归入当前文件夹
 
 ### 2026-10-28 · 技术债清理（配置 + 原生弹窗）
 - 脚本配置统一抽离 `scripts/config.mjs`：环境变量优先、其次项目根 `.env`（模板 `.env.example`），移除全部硬编码账号 ID / 数据库 ID / 机器路径与 `powershell` 读 Token 依赖，跨机器可复用

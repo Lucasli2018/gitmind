@@ -21,8 +21,8 @@ export const Auth = {
 };
 
 export async function getMaps() { return (await api("/maps")).maps; }
-export async function createMap(title, type, data) {
-  return (await api("/maps", { method: "POST", body: JSON.stringify({ title, type, data }) })).map;
+export async function createMap(title, type, data, folderId = null) {
+  return (await api("/maps", { method: "POST", body: JSON.stringify({ title, type, data, folder_id: folderId || null }) })).map;
 }
 export async function getMap(id) { return (await api("/maps/" + id)).map; }
 export async function saveMap(id, payload) {
@@ -31,6 +31,25 @@ export async function saveMap(id, payload) {
 export async function deleteMap(id) { return api("/maps/" + id, { method: "DELETE" }); }
 export async function setShare(id, isPublic) {
   return api("/maps/" + id + "/share", { method: "PUT", body: JSON.stringify({ is_public: isPublic }) });
+}
+
+/* ---------- 文件夹 / 层级管理 ---------- */
+export async function getFolders() { return (await api("/folders")).folders; }
+export async function createFolder(name, parentId = null) {
+  return (await api("/folders", { method: "POST", body: JSON.stringify({ name, parent_id: parentId || null }) })).folder;
+}
+export async function renameFolder(id, name) {
+  return api("/folders/" + id, { method: "PATCH", body: JSON.stringify({ name }) });
+}
+export async function moveFolder(id, parentId = null) {
+  return api("/folders/" + id, { method: "PATCH", body: JSON.stringify({ parent_id: parentId || null }) });
+}
+export async function deleteFolder(id) {
+  return api("/folders/" + id, { method: "DELETE" });
+}
+// 移动导图到某文件夹（folderId 为 null 表示移回「未分类」）
+export async function moveMap(id, folderId = null) {
+  return saveMap(id, { folder_id: folderId || null });
 }
 
 export function fmtDate(ts) {
