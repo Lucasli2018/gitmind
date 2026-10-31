@@ -129,13 +129,19 @@ function applyTheme(name, opts = {}) {
   currentTheme = name;
   const cm = childrenMap();
   const roots = editor.doc.nodes.filter((n) => n.parentId == null);
-  function paint(id, color) {
+  // 按「主分支」上色：根用调色板首色，每个根的直接子节点（主分支）循环取后续色，
+  // 整棵子树继承该分支色 —— 形成 XMind 式彩虹分支；衍生父子连线自动跟随子节点 stroke 变色。
+  function paintSubtree(id, color) {
     const n = editor.nodeById(id); if (!n) return;
     if (n.parentId == null) { n.color = color; n.textColor = "#fff"; }
     else n.stroke = color;
-    for (const c of cm.get(id) || []) paint(c.id, color);
+    for (const c of cm.get(id) || []) paintSubtree(c.id, color);
   }
-  roots.forEach((r, i) => paint(r.id, pal[i % pal.length]));
+  roots.forEach((r, ri) => {
+    paintSubtree(r.id, pal[ri % pal.length]);
+    const direct = cm.get(r.id) || [];
+    direct.forEach((k, i) => paintSubtree(k.id, pal[(ri + i + 1) % pal.length]));
+  });
   editor.doc.theme = name; // 主题随文档持久化（只换配色，不重排，保留拖动位置）
   editor.render(); editor.onChange();
   if (!opts.silent) editor.pushHistory();
@@ -1339,7 +1345,8 @@ function showMmMenu(x, y) {
     const singleNode = selIds.length === 1 ? editor.nodeById(selIds[0]) : null;
     if (singleNode && singleNode.image) items.push({ label: "移除图片", act: () => editor.setNodeStyle({ image: null }) });
     if (singleNode && singleNode.icon) items.push({ label: "移除图标", act: () => editor.setNodeStyle({ icon: null }) });
-    if (g || (singleNode && (singleNode.image || singleNode.icon))) items.push({ sep: true });
+    if (singleNode) items.push({ label: "节点标记…", act: () => openMarksModal(singleNode) });
+    if (g || (singleNode && (singleNode.image || singleNode.icon || singleNode.marks))) items.push({ sep: true });
     items.push({ label: "回到根节点", kbd: "Ctrl+Enter", act: mmFocusRoot });
     items.push({ sep: true });
     items.push({ label: "展开所有", act: () => mmSetAllCollapsed(false) });
@@ -1401,18 +1408,150 @@ function resetMmStyles() {
     delete n.bold; delete n.italic; delete n.underline;
     delete n.strokeWidth; delete n.strokeStyle; delete n.roughness; delete n.opacity;
     n.shape = "rounded";
-    if (n.parentId == null) { n.fontSize = 17; }
-    else {
-      n.fontSize = 15; n.color = "#fff"; n.textColor = "#1f2a37";
-      let p = editor.nodeById(n.parentId);
-      while (p && p.parentId != null) p = editor.nodeById(p.parentId);
-      if (p && p.color) n.stroke = p.color;
-    }
+    n.fontSize = n.parentId == null ? 17 : 15;
   }
-  // 只清样式，不重排（尺寸变化后需要整齐时手动点整理布局）
-  editor.render(); editor.onChange(); editor.pushHistory();
+  // 只清自定义样式；配色交回主题按「主分支」重新上色（保留彩虹分支）
+  applyTheme(editor.doc.theme || currentTheme, { silent: true });
+  editor.pushHistory();
   toast("已去除所有节点自定义样式", "success");
-}function copyDocJSON() {
+}// ---------- 节点标记编辑 ----------
+function escapeAttr(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function openMarksModal(node) {
+  if (!node) return;
+  const m = node.marks || {};
+  const prio = m.priority || "none";
+  const prog = (m.progress != null) ? Math.max(0, Math.min(100, Math.round(+m.progress))) : 0;
+  const mask = document.createElement("div");
+  mask.className = "gm-modal-mask";
+  mask.innerHTML = `<div class="gm-modal" role="dialog" aria-modal="true">`
+    + `<button class="gm-modal-x" aria-label="关闭">×</button>`
+    + `<div class="gm-modal-title">节点标记</div>`
+    + `<div class="gm-modal-scroll">`
+    + `<div class="gm-marks-row"><label>标签</label><input id="mMarksTag" class="gm-input" maxlength="20" placeholder="如：待办 / 重点 / 风险" value="${escapeAttr(m.tag)}"/></div>`
+    + `<div class="gm-marks-row"><label>优先级</label><div class="gm-prio-group" id="mMarksPrio">`
+    + [["none", "无"], ["high", "高"], ["mid", "中"], ["low", "低"]].map(([p, l]) => `<button data-p="${p}" class="${prio === p ? "active" : ""}">${l}</button>`).join("")
+    + `</div></div>`
+    + `<div class="gm-marks-row"><label>进度</label><input type="range" id="mMarksProg" min="0" max="100" step="5" value="${prog}"/><span id="mMarksProgV" class="gm-prog-v">${prog}%</span>`
+    + `<label class="gm-marks-chk"><input type="checkbox" id="mMarksProgOn" ${m.progress != null ? "checked" : ""}/> 启用进度</label></div>`
+    + `</div>`
+    + `<div class="gm-modal-acts"><button class="btn btn-ghost" id="mMarksCancel">取消</button><button class="btn btn-soft" id="mMarksOk">保存</button></div>`
+    + `</div>`;
+  document.body.appendChild(mask);
+  const close = () => mask.remove();
+  mask.addEventListener("click", (e) => { if (e.target === mask || e.target.classList.contains("gm-modal-x")) close(); });
+  let selPrio = prio;
+  const prioBox = mask.querySelector("#mMarksPrio");
+  prioBox.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+    selPrio = b.dataset.p;
+    prioBox.querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
+  }));
+  const progInput = mask.querySelector("#mMarksProg");
+  const progV = mask.querySelector("#mMarksProgV");
+  const progOn = mask.querySelector("#mMarksProgOn");
+  const syncProg = () => { progV.textContent = (progOn.checked ? progInput.value : 0) + "%"; };
+  progInput.addEventListener("input", syncProg);
+  progOn.addEventListener("change", syncProg);
+  const save = () => {
+    const tag = mask.querySelector("#mMarksTag").value.trim();
+    const on = progOn.checked;
+    const val = +progInput.value;
+    const marks = {};
+    if (tag) marks.tag = tag;
+    if (selPrio !== "none") marks.priority = selPrio;
+    if (on) marks.progress = val;
+    if (Object.keys(marks).length) node.marks = marks; else delete node.marks;
+    close();
+    editor.render(); editor.onChange(); editor.pushHistory();
+  };
+  mask.querySelector("#mMarksCancel").addEventListener("click", close);
+  mask.querySelector("#mMarksOk").addEventListener("click", save);
+}
+
+// ---------- 演示播放模式 ----------
+let _presentFrames = [];
+let _presentIdx = -1;
+let _presentTimer = null;
+function buildPresentFrames() {
+  const hidden = editor.hiddenNodes();
+  const visible = editor.doc.nodes.filter((n) => !hidden.has(n.id));
+  if (editor.doc.type === "mindmap") {
+    const depthOf = (n) => { let d = 0, p = n; while (p && p.parentId != null) { p = editor.nodeById(p.parentId); d++; } return d; };
+    visible.sort((a, b) => depthOf(a) - depthOf(b) || a.y - b.y || a.x - b.x);
+  } else {
+    visible.sort((a, b) => a.y - b.y || a.x - b.x);
+  }
+  return visible.map((n) => {
+    const path = new Set();
+    let p = n;
+    while (p) { path.add(p.id); p = p.parentId != null ? editor.nodeById(p.parentId) : null; }
+    return { id: n.id, path };
+  });
+}
+function presentGoto(i, auto) {
+  if (!_presentFrames.length) return;
+  _presentIdx = Math.max(0, Math.min(_presentFrames.length - 1, i));
+  const f = _presentFrames[_presentIdx];
+  editor._presentId = f.id;
+  editor._presentPath = f.path;
+  const node = editor.nodeById(f.id);
+  const b = node && editor.nodeBBox(node);
+  if (b) editor.animateToView(b, auto ? 520 : 450); else editor.render();
+  const bar = document.getElementById("presentBar");
+  if (bar) {
+    bar.querySelector("#presentIdx").textContent = (_presentIdx + 1) + " / " + _presentFrames.length;
+    bar.querySelector("#presentPrev").disabled = _presentIdx <= 0;
+    bar.querySelector("#presentNext").disabled = _presentIdx >= _presentFrames.length - 1;
+  }
+}
+function presentPlay() {
+  if (_presentTimer) { presentPause(); return; }
+  const btn = document.getElementById("presentPlayBtn");
+  if (btn) btn.textContent = "⏸";
+  _presentTimer = setInterval(() => {
+    if (_presentIdx >= _presentFrames.length - 1) { presentPause(); return; }
+    presentGoto(_presentIdx + 1, true);
+  }, 1500);
+}
+function presentPause() {
+  if (_presentTimer) { clearInterval(_presentTimer); _presentTimer = null; }
+  const btn = document.getElementById("presentPlayBtn");
+  if (btn) btn.textContent = "▶";
+}
+function startPresent() {
+  _presentFrames = buildPresentFrames();
+  if (!_presentFrames.length) { toast("没有可播放的节点", "info"); return; }
+  document.body.classList.add("gm-present");
+  const bar = document.createElement("div");
+  bar.id = "presentBar";
+  bar.className = "gm-present-bar";
+  bar.innerHTML = `<button id="presentPrev" title="上一帧 (←)">‹</button>`
+    + `<span id="presentIdx" class="gm-present-idx">1 / ${_presentFrames.length}</span>`
+    + `<button id="presentNext" title="下一帧 (→ / 空格)">›</button>`
+    + `<button id="presentPlayBtn" title="自动播放">▶</button>`
+    + `<button id="presentExit" title="退出 (Esc)">✕</button>`;
+  document.body.appendChild(bar);
+  document.getElementById("presentPrev").addEventListener("click", () => { presentPause(); presentGoto(_presentIdx - 1); });
+  document.getElementById("presentNext").addEventListener("click", () => { presentPause(); presentGoto(_presentIdx + 1); });
+  document.getElementById("presentPlayBtn").addEventListener("click", presentPlay);
+  document.getElementById("presentExit").addEventListener("click", stopPresent);
+  presentGoto(0);
+}
+function stopPresent() {
+  presentPause();
+  document.body.classList.remove("gm-present");
+  const bar = document.getElementById("presentBar");
+  if (bar) bar.remove();
+  editor._presentId = null; editor._presentPath = null;
+  editor.render();
+}
+function presentKey(e) {
+  if (!document.body.classList.contains("gm-present")) return;
+  if (e.key === "Escape") { stopPresent(); }
+  else if (e.key === "ArrowRight" || e.key === " " || e.key === "Enter") { e.preventDefault(); presentPause(); presentGoto(_presentIdx + 1); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); presentPause(); presentGoto(_presentIdx - 1); }
+}
+
+function copyDocJSON() {
   navigator.clipboard.writeText(JSON.stringify(editor.doc, null, 2))
     .then(() => toast("已复制文档 JSON 到剪贴板", "info"))
     .catch(() => toast("复制失败", "error"));
@@ -1782,6 +1921,7 @@ function wireExport() {
 function wireChrome() {
   document.getElementById("saveBtn").addEventListener("click", saveNow);
   document.getElementById("shareBtn").addEventListener("click", toggleShare);
+  const presentBtn = document.getElementById("presentBtn"); if (presentBtn) presentBtn.addEventListener("click", startPresent);
   document.getElementById("undoBtn").addEventListener("click", () => editor.undo());
   document.getElementById("redoBtn").addEventListener("click", () => editor.redo());
   // 右侧栏（视图/操作/快捷键面板）已移除：缩放走左下控制条，大纲/删除走右键菜单与快捷键
@@ -1852,8 +1992,12 @@ function wireMobileDrawers() {
 // ---------- 快捷键 ----------
 function wireKeys() {
   window.addEventListener("keydown", (e) => {
+    // 演示模式：仅响应演示控制键，屏蔽一切编辑快捷键
+    if (document.body.classList.contains("gm-present")) { presentKey(e); return; }
     const t = e.target;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    // P：进入演示播放（输入框内不触发）
+    if ((e.key === "p" || e.key === "P") && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); startPresent(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); saveNow(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); if (e.shiftKey) editor.redo(); else editor.undo(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") { e.preventDefault(); editor.redo(); return; }

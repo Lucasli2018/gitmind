@@ -24,6 +24,7 @@ export class Editor {
     this.readOnly = !!opts.readOnly;
     this.doc = { type: this.mode, nodes: [], edges: [], strokes: [], view: { x: 0, y: 0, scale: 1 } };
     this.view = this.doc.view;
+    this._presentId = null; this._presentPath = null; this._viewAnim = null;
     this.selection = new Set();
     this.sizes = new Map();
     this._drag = null; this._pan = null; this._connect = null; this._stroke = null; this._dragTarget = null;
@@ -551,6 +552,11 @@ export class Editor {
         inner += `<a href="${escapeXml(n.href)}" target="_blank" rel="noopener"><g transform="translate(${bx},-6)"><title>${escapeXml(n.href)}</title><circle r="8" fill="#2f80ed" stroke="#fff" stroke-width="1.5"/><text y="3.5" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">链</text></g></a>`;
       }
     }
+    // 节点标记徽标（标签 / 优先级 / 进度）：顶部居中，所有模式通用
+    if (n.marks && !this._forExport) {
+      const mk = this._marksBadges(n, w);
+      if (mk) inner += mk;
+    }
     // 白板：锁定节点徽标（灰色小锁，锁定后不可选中/拖动/删除）
     if (this.doc.type === "whiteboard" && n.locked && !this._forExport) {
       inner += `<g transform="translate(${w - 6},-6)"><circle r="8" fill="#94a3b8" stroke="#fff" stroke-width="1.5"/><text y="3.5" text-anchor="middle" font-size="9">🔒</text></g>`;
@@ -586,6 +592,11 @@ export class Editor {
       } else {
         inner += `<rect x="-5" y="-5" width="${w + 10}" height="${h + 10}" rx="14" fill="none" stroke="#11b5a4" stroke-width="2" stroke-dasharray="6 4"/>`;
       }
+    }
+    // 演示播放：当前节点 / 祖先路径高亮（当前节点更醒目）
+    if (this._presentPath && this._presentPath.has(n.id)) {
+      const cur = this._presentId === n.id;
+      inner += `<rect x="-7" y="-7" width="${w + 14}" height="${h + 14}" rx="15" fill="${cur ? "rgba(17,181,164,0.10)" : "none"}" stroke="${cur ? "#11b5a4" : "#94a3b8"}" stroke-width="${cur ? 3 : 1.5}" opacity="${cur ? 1 : 0.55}"/>`;
     }
     // 关联线工具：悬停吸附 / 拖拽中吸附的节点高亮（橙色虚线框）
     if (this.tool === "link" && (this._linkHover === n.id || this._connectHover === n.id) && !this._forExport) {
@@ -632,6 +643,41 @@ export class Editor {
     }
     const op = n.opacity != null && n.opacity < 1 ? ` opacity="${n.opacity}"` : "";
     return `<g class="gm-node${selected ? " sel" : ""}" data-id="${n.id}" transform="translate(${n.x},${n.y})"${op}>${inner}</g>`;
+  }
+
+  // 节点标记徽标：标签（黄底文字）+ 优先级（圆点 高/中/低）+ 进度（环形百分比），顶部居中排列
+  _marksBadges(n, w) {
+    const m = n.marks || {};
+    const PR = { high: "#e5484d", mid: "#f5a623", low: "#2f80ed" };
+    const items = [];
+    if (m.tag) items.push({ t: "tag", v: String(m.tag) });
+    if (m.priority && PR[m.priority]) items.push({ t: "prio", v: PR[m.priority] });
+    if (m.progress != null && Number.isFinite(+m.progress)) items.push({ t: "prog", v: Math.max(0, Math.min(100, +m.progress)) });
+    if (!items.length) return "";
+    const GAP = 4;
+    const widths = items.map((it) => it.t === "tag" ? Math.min(96, Math.max(26, this._labelWidth(it.v) + 12)) : (it.t === "prio" ? 18 : 24));
+    const totalW = widths.reduce((a, b) => a + b, 0) + GAP * (items.length - 1);
+    let x = -totalW / 2;
+    const y = -22;
+    let out = "";
+    items.forEach((it, idx) => {
+      const wd = widths[idx];
+      if (it.t === "tag") {
+        out += `<g transform="translate(${x.toFixed(1)},${y})"><rect x="0" y="0" width="${wd}" height="16" rx="8" fill="#fff" stroke="#ffd43b" stroke-width="1.2"/><text x="${(wd / 2).toFixed(1)}" y="12" text-anchor="middle" font-size="11" font-weight="700" fill="#8a6d00">${escapeXml(it.v)}</text></g>`;
+      } else if (it.t === "prio") {
+        const lbl = it.v === PR.high ? "高" : it.v === PR.mid ? "中" : "低";
+        out += `<g transform="translate(${x.toFixed(1)},${y})"><circle cx="9" cy="8" r="8" fill="${it.v}" stroke="#fff" stroke-width="1.5"/><text x="9" y="12" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">${lbl}</text></g>`;
+      } else {
+        const r = 8, cx = 12, cy = 8, circ = 2 * Math.PI * r;
+        const off = circ * (1 - it.v / 100);
+        out += `<g transform="translate(${x.toFixed(1)},${y})">`
+          + `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#fff" stroke="#e2e8f0" stroke-width="2.5"/>`
+          + `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${it.v >= 100 ? "#16a34a" : "#11b5a4"}" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="${circ.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" transform="rotate(-90 ${cx} ${cy})"/>`
+          + `<text x="${cx}" y="${cy + 3}" text-anchor="middle" font-size="8" font-weight="700" fill="#334155">${it.v}</text></g>`;
+      }
+      x += wd + GAP;
+    });
+    return out;
   }
 
   // 流程图端口坐标（世界坐标）：p ∈ top / bottom / left / right
@@ -1489,6 +1535,30 @@ export class Editor {
     this.view.x = px - wx * this.view.scale;
     this.view.y = py - wy * this.view.scale;
     this.render();
+  }
+  // 平滑过渡到指定世界坐标包围盒（演示播放 / 聚焦节点用）
+  animateToView(target, dur = 450) {
+    const r = this.rect();
+    if (!target || !Number.isFinite(target.x + target.y + target.w + target.h) || target.w <= 0 || target.h <= 0) return;
+    const pad = 90;
+    const scale = Math.min(2.4, Math.max(0.2, Math.min((r.width - pad) / target.w, (r.height - pad) / target.h)));
+    const dest = { scale, x: (r.width - target.w * scale) / 2 - target.x * scale, y: (r.height - target.h * scale) / 2 - target.y * scale };
+    this._animateView(dest, dur);
+  }
+  _animateView(dest, dur) {
+    if (this._viewAnim) cancelAnimationFrame(this._viewAnim);
+    const start = { x: this.view.x, y: this.view.y, scale: this.view.scale };
+    const t0 = performance.now();
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      this.view.x = start.x + (dest.x - start.x) * e;
+      this.view.y = start.y + (dest.y - start.y) * e;
+      this.view.scale = start.scale + (dest.scale - start.scale) * e;
+      this.render();
+      if (k < 1) this._viewAnim = requestAnimationFrame(step);
+      else this._viewAnim = null;
+    };
+    this._viewAnim = requestAnimationFrame(step);
   }
   onWheel(e) {
     e.preventDefault();

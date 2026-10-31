@@ -602,3 +602,43 @@ body.gm-zen .gm-right { display: none !important; }
 .gm-outline-item .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; opacity: .85; }
 .gm-outline-item .txt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gm-outline-item .fold { flex: none; font-size: 10px; color: #9aa6b5; }
+
+/* ---------- 演示播放模式 ---------- */
+body.gm-present .gm-topbar,
+body.gm-present .gm-toolbar,
+body.gm-present .gm-wb-bar,
+body.gm-present .gm-wb-style,
+body.gm-present .gm-ctl-bar,
+body.gm-present .gm-help-fab,
+body.gm-present .gm-drawer-mask { display: none !important; }
+body.gm-present .gm-canvas { pointer-events: none; cursor: default; }
+.gm-present-bar {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; z-index: 60;
+  background: rgba(31,42,55,.92); color: #fff; padding: 8px 12px; border-radius: 999px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.28);
+}
+.gm-present-bar button {
+  width: 34px; height: 34px; border: 0; border-radius: 50%; background: rgba(255,255,255,.14);
+  color: #fff; font-size: 16px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+}
+.gm-present-bar button:hover { background: rgba(255,255,255,.28); }
+.gm-present-bar button:disabled { opacity: .35; cursor: default; }
+.gm-present-idx { min-width: 58px; text-align: center; font-variant-numeric: tabular-nums; font-size: 14px; }
+#presentPlayBtn { width: 38px; height: 38px; font-size: 15px; }
+#presentExit { background: rgba(229,72,77,.85); }
+#presentExit:hover { background: rgba(229,72,77,1); }
+
+/* ---------- 节点标记弹窗 ---------- */
+.gm-marks-row { display: flex; align-items: center; gap: 10px; margin: 12px 2px; }
+.gm-marks-row > label { width: 50px; flex: none; color: #475569; font-size: 13px; }
+.gm-marks-row .gm-input { flex: 1; min-width: 0; }
+.gm-prio-group { display: inline-flex; gap: 6px; }
+.gm-prio-group button { padding: 5px 12px; border: 1px solid #d6dde6; background: #fff; border-radius: 8px; cursor: pointer; font-size: 13px; color: #334155; }
+.gm-prio-group button.active { background: #11b5a4; border-color: #11b5a4; color: #fff; }
+.gm-prog-v { min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; color: #334155; }
+.gm-marks-chk { margin-left: auto; font-size: 12px; color: #64748b; display: inline-flex; align-items: center; gap: 4px; }
+.gm-marks-row input[type="range"] { flex: 1; min-width: 0; accent-color: #11b5a4; }
+/* 通用输入框（标记弹窗等复用） */
+.gm-input { width: 100%; padding: 8px 10px; border: 1px solid #d6dde6; border-radius: 8px; font-size: 14px; color: #1f2a37; background: #fff; outline: none; box-sizing: border-box; }
+.gm-input:focus { border-color: #11b5a4; box-shadow: 0 0 0 3px rgba(17,181,164,.15); }
